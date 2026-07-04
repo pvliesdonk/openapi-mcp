@@ -109,3 +109,28 @@ def load_spec(
             f"(missing top-level 'openapi'/'swagger' key): got {type(data).__name__}"
         )
     return data
+
+
+def resolve_base_url(spec: dict[str, Any], override: str | None) -> str:
+    """Resolve the upstream base URL: override wins, else spec servers[0].
+
+    Raises:
+        BootConfigError: when no usable absolute http(s) URL is available.
+    """
+    if override:
+        url = override
+    else:
+        servers = spec.get("servers")
+        if not isinstance(servers, list) or not servers:
+            raise BootConfigError(
+                "no usable base URL: spec has no servers[] and "
+                "OAPI_API_BASE_URL is unset"
+            )
+        first = servers[0] if isinstance(servers[0], dict) else {}
+        url = str(first.get("url", ""))
+    if not url or "{" in url or not url.lower().startswith(("http://", "https://")):
+        raise BootConfigError(
+            f"no usable base URL: {url!r} is not an absolute http(s) URL "
+            "(set OAPI_API_BASE_URL to override)"
+        )
+    return url

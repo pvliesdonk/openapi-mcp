@@ -116,3 +116,40 @@ def test_load_spec_url_non_2xx_fails_loud() -> None:
         domain.load_spec(
             ("url", "https://api.example.test/openapi.json"), http_client=client
         )
+
+
+def test_resolve_base_url_override_wins() -> None:
+    spec = {"servers": [{"url": "https://spec.example.test"}]}
+    assert (
+        domain.resolve_base_url(spec, "https://override.example.test")
+        == "https://override.example.test"
+    )
+
+
+def test_resolve_base_url_falls_back_to_spec_servers() -> None:
+    spec = {"servers": [{"url": "https://spec.example.test"}]}
+    assert domain.resolve_base_url(spec, None) == "https://spec.example.test"
+
+
+def test_resolve_base_url_empty_servers_fails_loud() -> None:
+    with pytest.raises(domain.BootConfigError, match="base URL"):
+        domain.resolve_base_url({"servers": []}, None)
+    with pytest.raises(domain.BootConfigError, match="base URL"):
+        domain.resolve_base_url({}, None)
+
+
+def test_resolve_base_url_relative_fails_loud() -> None:
+    with pytest.raises(domain.BootConfigError, match="base URL"):
+        domain.resolve_base_url({"servers": [{"url": "/v1"}]}, None)
+
+
+def test_resolve_base_url_placeholder_fails_loud() -> None:
+    with pytest.raises(domain.BootConfigError, match="base URL"):
+        domain.resolve_base_url({"servers": [{"url": "https://{host}/v1"}]}, None)
+
+
+def test_resolve_base_url_relative_override_fails_loud() -> None:
+    with pytest.raises(domain.BootConfigError, match="base URL"):
+        domain.resolve_base_url(
+            {"servers": [{"url": "https://spec.example.test"}]}, "/relative"
+        )

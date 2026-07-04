@@ -123,3 +123,63 @@ def test_boot_failure_after_client_build_closes_client(
     with pytest.raises(RuntimeError, match="provider boom"):
         make_server()
     assert built and built[0].is_closed
+
+
+def test_boot_failure_with_base_exception_closes_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """make_server() closes the client even on a BaseException mid-boot."""
+    built: list[httpx.AsyncClient] = []
+    real_build = domain.build_upstream_client
+
+    def spy_build(**kwargs: Any) -> httpx.AsyncClient:
+        client = real_build(**kwargs)
+        built.append(client)
+        return client
+
+    class _BoomBase:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("openapi_mcp.server.build_upstream_client", spy_build)
+    monkeypatch.setattr("openapi_mcp.server.OpenAPIProvider", _BoomBase)
+
+    with pytest.raises(KeyboardInterrupt):
+        make_server()
+    assert built and built[0].is_closed
+
+
+async def test_lifespan_closes_client_when_service_start_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service start() failure still closes the lifespan-owned client."""
+    client = httpx.AsyncClient()
+
+    class _BoomStart(domain.Service):
+        async def start(self) -> None:
+            raise RuntimeError("start boom")
+
+    monkeypatch.setattr("openapi_mcp._server_deps.Service", _BoomStart)
+    lifespan = make_server_lifespan(client)
+    with pytest.raises(RuntimeError, match="start boom"):
+        async with lifespan(object()):
+            pass
+    assert client.is_closed
+
+
+async def test_lifespan_closes_client_when_service_stop_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service stop() failure still closes the lifespan-owned client."""
+    client = httpx.AsyncClient()
+
+    class _BoomStop(domain.Service):
+        async def stop(self) -> None:
+            raise RuntimeError("stop boom")
+
+    monkeypatch.setattr("openapi_mcp._server_deps.Service", _BoomStop)
+    lifespan = make_server_lifespan(client)
+    with pytest.raises(RuntimeError, match="stop boom"):
+        async with lifespan(object()):
+            pass
+    assert client.is_closed

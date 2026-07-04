@@ -102,7 +102,9 @@ def load_spec(
     if kind == "path":
         try:
             text = Path(value).read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
+            # UnicodeDecodeError subclasses ValueError, not OSError — catch it
+            # explicitly so a non-UTF-8 spec file fails loud as BootConfigError.
             raise BootConfigError(f"could not read spec file {value!r}: {exc}") from exc
     else:
         client = http_client or httpx.Client(timeout=30.0)

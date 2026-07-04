@@ -41,13 +41,16 @@ def make_server_lifespan(
     @asynccontextmanager
     async def _lifespan(_mcp: object) -> AsyncIterator[dict[str, Any]]:
         service = Service()
-        await service.start()
-        logger.info("Service started")
+        # Own the client's shutdown across the whole lifespan: start() is inside
+        # the try so a start() failure still closes the client. make_server() has
+        # already returned by the time the lifespan runs, so its own boot-failure
+        # cleanup cannot cover a start() failure — only this finally can.
         try:
+            await service.start()
+            logger.info("Service started")
             yield {"service": service}
         finally:
-            # Close the client even if service.stop() raises — the lifespan
-            # owns the client's shutdown and must not leak it on a stop error.
+            # Close the client even if service.stop() raises.
             try:
                 await service.stop()
             finally:

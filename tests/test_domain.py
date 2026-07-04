@@ -81,6 +81,14 @@ def test_load_spec_missing_file_fails_loud(tmp_path: Path) -> None:
         domain.load_spec(("path", str(tmp_path / "nope.json")))
 
 
+def test_load_spec_non_utf8_file_fails_loud(tmp_path: Path) -> None:
+    """A spec file with invalid UTF-8 bytes fails loud as BootConfigError."""
+    p = tmp_path / "bad-bytes.json"
+    p.write_bytes(b"\xff\xfe not valid utf-8")
+    with pytest.raises(domain.BootConfigError, match="could not read spec file"):
+        domain.load_spec(("path", str(p)))
+
+
 def test_load_spec_unparseable_fails_loud(tmp_path: Path) -> None:
     p = tmp_path / "bad.json"
     p.write_text("{ this is : not : valid ]", encoding="utf-8")

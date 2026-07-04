@@ -10,6 +10,7 @@ they unit-test without a server:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,17 @@ import yaml
 
 class BootConfigError(RuntimeError):
     """Raised for any fail-loud boot-time misconfiguration."""
+
+
+@dataclass(frozen=True)
+class SchemeRef:
+    """A security scheme actually referenced by the spec's requirements."""
+
+    key: str
+    type: str
+    location: str | None
+    name: str | None
+    scheme: str | None
 
 
 class Service:
@@ -134,3 +146,57 @@ def resolve_base_url(spec: dict[str, Any], override: str | None) -> str:
             "(set OAPI_API_BASE_URL to override)"
         )
     return url
+
+
+def _collect_security_references(requirements: object, referenced: set[str]) -> None:
+    """Extract scheme keys from a security requirements list."""
+    if isinstance(requirements, list):
+        for req in requirements:
+            if isinstance(req, dict):
+                referenced.update(req.keys())
+
+
+def _collect_path_references(spec: dict[str, Any], referenced: set[str]) -> None:
+    """Extract scheme keys from all path item operation security blocks."""
+    for path_item in (spec.get("paths") or {}).values():
+        if isinstance(path_item, dict):
+            for operation in path_item.values():
+                if isinstance(operation, dict):
+                    _collect_security_references(operation.get("security"), referenced)
+
+
+def _make_scheme_ref(key: str, defn: dict[str, Any]) -> SchemeRef:
+    """Create a SchemeRef from a security scheme definition."""
+    return SchemeRef(
+        key=key,
+        type=str(defn.get("type", "")),
+        location=defn.get("in"),
+        name=defn.get("name"),
+        scheme=defn.get("scheme"),
+    )
+
+
+def required_schemes(spec: dict[str, Any]) -> list[SchemeRef]:
+    """Return the schemes referenced by root/operation ``security:`` blocks.
+
+    Only *referenced* schemes are returned; a scheme declared under
+    ``components.securitySchemes`` but never required is omitted.
+
+    Raises:
+        BootConfigError: if a requirement references an undefined scheme.
+    """
+    definitions = (spec.get("components") or {}).get("securitySchemes") or {}
+    referenced: set[str] = set()
+
+    _collect_security_references(spec.get("security"), referenced)
+    _collect_path_references(spec, referenced)
+
+    result: list[SchemeRef] = []
+    for key in sorted(referenced):
+        defn = definitions.get(key)
+        if not isinstance(defn, dict):
+            raise BootConfigError(
+                f"security requirement references undefined scheme {key!r}"
+            )
+        result.append(_make_scheme_ref(key, defn))
+    return result

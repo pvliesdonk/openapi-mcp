@@ -153,3 +153,45 @@ def test_resolve_base_url_relative_override_fails_loud() -> None:
         domain.resolve_base_url(
             {"servers": [{"url": "https://spec.example.test"}]}, "/relative"
         )
+
+
+def _spec_with_schemes() -> dict[str, object]:
+    return {
+        "openapi": "3.0.0",
+        "components": {
+            "securitySchemes": {
+                "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+                "BearerAuth": {"type": "http", "scheme": "bearer"},
+                "UnusedAuth": {"type": "http", "scheme": "basic"},
+            }
+        },
+        "security": [{"ApiKeyAuth": []}],
+        "paths": {
+            "/things": {"get": {"security": [{"BearerAuth": []}], "responses": {}}},
+        },
+    }
+
+
+def test_required_schemes_returns_only_referenced() -> None:
+    refs = domain.required_schemes(_spec_with_schemes())
+    keys = [r.key for r in refs]
+    assert keys == ["ApiKeyAuth", "BearerAuth"]  # sorted; UnusedAuth excluded
+
+
+def test_required_schemes_populates_fields() -> None:
+    refs = {r.key: r for r in domain.required_schemes(_spec_with_schemes())}
+    assert refs["ApiKeyAuth"].type == "apiKey"
+    assert refs["ApiKeyAuth"].location == "header"
+    assert refs["ApiKeyAuth"].name == "X-API-Key"
+    assert refs["BearerAuth"].type == "http"
+    assert refs["BearerAuth"].scheme == "bearer"
+
+
+def test_required_schemes_undefined_reference_fails_loud() -> None:
+    spec = {"security": [{"Ghost": []}], "components": {"securitySchemes": {}}}
+    with pytest.raises(domain.BootConfigError, match="Ghost"):
+        domain.required_schemes(spec)
+
+
+def test_required_schemes_no_security_returns_empty() -> None:
+    assert domain.required_schemes({"openapi": "3.0.0", "paths": {}}) == []

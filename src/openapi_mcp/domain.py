@@ -1,12 +1,24 @@
-"""Domain logic placeholder for OpenAPI MCP.
+"""Domain logic for OpenAPI MCP.
 
-Real projects replace :class:`Service` with their actual business
-logic (database client, API wrapper, file indexer, etc.).  Keep
-FastMCP types out of this module — domain code should be plain
-Python, easy to unit-test without a server.
+Two responsibilities live here, both plain Python (no FastMCP imports) so
+they unit-test without a server:
+
+* ``Service`` — the retained fleet-standard health check.
+* The OpenAPI spec/auth core — spec loading, base-URL resolution, required-
+  scheme discovery, and authenticated ``httpx.AsyncClient`` construction.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import httpx
+import yaml
+
+
+class BootConfigError(RuntimeError):
+    """Raised for any fail-loud boot-time misconfiguration."""
 
 
 class Service:
@@ -30,3 +42,70 @@ class Service:
     async def status(self) -> dict[str, object]:
         """Structured status payload."""
         return {"ready": self._ready}
+
+
+def resolve_spec_source(spec_url: str | None, spec_path: str | None) -> tuple[str, str]:
+    """Return ``("url", value)`` or ``("path", value)``.
+
+    Raises:
+        BootConfigError: unless exactly one of the two is set.
+    """
+    if spec_url and not spec_path:
+        return ("url", spec_url)
+    if spec_path and not spec_url:
+        return ("path", spec_path)
+    raise BootConfigError(
+        "set exactly one of OAPI_SPEC_URL or OAPI_SPEC_PATH "
+        f"(url={'set' if spec_url else 'unset'}, "
+        f"path={'set' if spec_path else 'unset'})"
+    )
+
+
+def _parse_spec_text(text: str) -> Any:
+    """Parse *text* as YAML (a superset of JSON).
+
+    Raises:
+        BootConfigError: on a parse failure.
+    """
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise BootConfigError(f"could not parse spec as JSON or YAML: {exc}") from exc
+
+
+def load_spec(
+    source: tuple[str, str], *, http_client: httpx.Client | None = None
+) -> dict[str, Any]:
+    """Fetch/read and parse the OpenAPI spec.
+
+    Raises:
+        BootConfigError: on read/fetch failure, parse failure, or a body
+            that parses but is not an OpenAPI document.
+    """
+    kind, value = source
+    if kind == "path":
+        try:
+            text = Path(value).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise BootConfigError(f"could not read spec file {value!r}: {exc}") from exc
+    else:
+        client = http_client or httpx.Client(timeout=30.0)
+        try:
+            resp = client.get(value)
+            resp.raise_for_status()
+            text = resp.text
+        except httpx.HTTPError as exc:
+            raise BootConfigError(
+                f"could not fetch spec from {value!r}: {exc}"
+            ) from exc
+        finally:
+            if http_client is None:
+                client.close()
+
+    data = _parse_spec_text(text)
+    if not isinstance(data, dict) or not (data.get("openapi") or data.get("swagger")):
+        raise BootConfigError(
+            f"spec body parsed but is not an OpenAPI document "
+            f"(missing top-level 'openapi'/'swagger' key): got {type(data).__name__}"
+        )
+    return data

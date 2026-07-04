@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import httpx
 import pytest
 
+from openapi_mcp import domain
 from openapi_mcp.config import ProjectConfig
 
 
@@ -36,3 +41,78 @@ def test_config_malformed_timeout_fails_loud(
     monkeypatch.setenv("OAPI_HTTP_TIMEOUT", "not-a-number")
     with pytest.raises(ConfigurationError):
         ProjectConfig.from_env()
+
+
+def test_resolve_spec_source_exactly_one() -> None:
+    assert domain.resolve_spec_source("http://x/spec.json", None) == (
+        "url",
+        "http://x/spec.json",
+    )
+    assert domain.resolve_spec_source(None, "/specs/api.yaml") == (
+        "path",
+        "/specs/api.yaml",
+    )
+
+
+def test_resolve_spec_source_rejects_both_and_neither() -> None:
+    with pytest.raises(domain.BootConfigError, match="exactly one"):
+        domain.resolve_spec_source("http://x", "/p")
+    with pytest.raises(domain.BootConfigError, match="exactly one"):
+        domain.resolve_spec_source(None, None)
+
+
+def test_load_spec_from_path_json(tmp_path: Path) -> None:
+    spec = {"openapi": "3.0.0", "info": {"title": "t"}, "paths": {}}
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps(spec), encoding="utf-8")
+    assert domain.load_spec(("path", str(p)))["openapi"] == "3.0.0"
+
+
+def test_load_spec_from_path_yaml(tmp_path: Path) -> None:
+    p = tmp_path / "s.yaml"
+    p.write_text("openapi: 3.0.0\ninfo:\n  title: t\npaths: {}\n", encoding="utf-8")
+    assert domain.load_spec(("path", str(p)))["info"]["title"] == "t"
+
+
+def test_load_spec_missing_file_fails_loud(tmp_path: Path) -> None:
+    with pytest.raises(domain.BootConfigError, match="could not read"):
+        domain.load_spec(("path", str(tmp_path / "nope.json")))
+
+
+def test_load_spec_unparseable_fails_loud(tmp_path: Path) -> None:
+    p = tmp_path / "bad.json"
+    p.write_text("{ this is : not : valid ]", encoding="utf-8")
+    with pytest.raises(domain.BootConfigError, match="could not parse"):
+        domain.load_spec(("path", str(p)))
+
+
+def test_load_spec_not_openapi_doc_fails_loud(tmp_path: Path) -> None:
+    p = tmp_path / "plain.json"
+    p.write_text(json.dumps({"hello": "world"}), encoding="utf-8")
+    with pytest.raises(domain.BootConfigError, match="not an OpenAPI"):
+        domain.load_spec(("path", str(p)))
+
+
+def test_load_spec_from_url_uses_injected_client() -> None:
+    spec = {"openapi": "3.0.0", "info": {"title": "t"}, "paths": {}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://api.example.test/openapi.json"
+        return httpx.Response(200, json=spec)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = domain.load_spec(
+        ("url", "https://api.example.test/openapi.json"), http_client=client
+    )
+    assert result["openapi"] == "3.0.0"
+
+
+def test_load_spec_url_non_2xx_fails_loud() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="nope")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(domain.BootConfigError, match=r"openapi\.json"):
+        domain.load_spec(
+            ("url", "https://api.example.test/openapi.json"), http_client=client
+        )

@@ -11,13 +11,13 @@ A generic MCP server that builds its tools at runtime from any OpenAPI specifica
 ## Features
 
 <!-- DOMAIN-START -->
-`openapi-mcp` builds its MCP tools at runtime from any OpenAPI specification —
-no per-API code. Point one container image at a spec (URL or mounted file) plus
-upstream credentials, and it exposes that API's operations as MCP tools via
-FastMCP's `OpenAPIProvider`.
+`openapi-mcp` builds its MCP tools at runtime from any OpenAPI specification,
+with no per-API code. Point one container image at a spec (URL or mounted file)
+plus upstream credentials, and it exposes the operations of that API as MCP
+tools via FastMCP's `OpenAPIProvider`.
 
-Intended for **simple** APIs. Large/complex APIs — or ones using
-`oauth2`/`openIdConnect`/`mutualTLS` upstream auth — are better served by a
+Intended for **simple** APIs. Large or complex APIs, or ones using
+`oauth2`/`openIdConnect`/`mutualTLS` upstream auth, are better served by a
 purpose-built sibling. See
 [`docs/superpowers/specs/2026-07-04-openapi-generic-wrapper-design.md`](docs/superpowers/specs/2026-07-04-openapi-generic-wrapper-design.md)
 for the design and [`.env.example`](.env.example) for the full `OAPI_*` contract.

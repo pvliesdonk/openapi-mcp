@@ -112,7 +112,10 @@ def load_spec(
             resp = client.get(value)
             resp.raise_for_status()
             text = resp.text
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            # httpx.InvalidURL does NOT subclass httpx.HTTPError, so a malformed
+            # OAPI_SPEC_URL would otherwise escape as a raw traceback instead of
+            # this module's fail-loud BootConfigError.
             raise BootConfigError(
                 f"could not fetch spec from {value!r}: {exc}"
             ) from exc
@@ -281,10 +284,14 @@ def build_upstream_client(
     """Build an authenticated upstream client for the wrapped API.
 
     Raises:
-        BootConfigError: on a missing credential or an unsupported/malformed
-            scheme (message names the scheme key and its ``OAPI_SECURITY_*``
-            env var).
+        BootConfigError: on a non-positive timeout, a missing credential
+            (message names the scheme key and its ``OAPI_SECURITY_*`` env var),
+            or an unsupported/malformed scheme (message names the scheme key).
     """
+    if timeout <= 0:
+        # httpx treats timeout=0 as an instant timeout (every request fails),
+        # not "disabled"; reject it loudly rather than shipping a broken client.
+        raise BootConfigError(f"OAPI_HTTP_TIMEOUT must be positive; got {timeout!r}")
     headers: dict[str, str] = {}
     params: dict[str, str] = {}
     for ref in required_schemes(spec):

@@ -360,3 +360,24 @@ def test_build_client_scheme_collision_fails_loud() -> None:
             timeout=5.0,
             env_lookup=_lookup({"A": "tok", "B": "tok2"}),
         )
+
+
+def test_load_spec_url_invalid_url_fails_loud() -> None:
+    """A malformed OAPI_SPEC_URL fails loud (httpx.InvalidURL, not HTTPError)."""
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda _req: httpx.Response(200))
+    )
+    with pytest.raises(domain.BootConfigError, match="could not fetch spec"):
+        domain.load_spec(("url", "http://\x00.example"), http_client=client)
+
+
+def test_build_client_zero_timeout_fails_loud() -> None:
+    """A non-positive OAPI_HTTP_TIMEOUT fails loud (0 = instant httpx timeout)."""
+    spec = _one_scheme_spec({"type": "apiKey", "in": "header", "name": "X-API-Key"})
+    with pytest.raises(domain.BootConfigError, match="must be positive"):
+        domain.build_upstream_client(
+            spec=spec,
+            base_url="https://api.example.test",
+            timeout=0.0,
+            env_lookup=_lookup({"Auth": "k"}),
+        )

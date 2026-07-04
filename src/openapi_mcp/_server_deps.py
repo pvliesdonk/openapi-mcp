@@ -46,9 +46,13 @@ def make_server_lifespan(
         try:
             yield {"service": service}
         finally:
-            await service.stop()
-            if not client.is_closed:
-                await client.aclose()
+            # Close the client even if service.stop() raises — the lifespan
+            # owns the client's shutdown and must not leak it on a stop error.
+            try:
+                await service.stop()
+            finally:
+                if not client.is_closed:
+                    await client.aclose()
             logger.info("Service stopped; upstream client closed")
 
     return _lifespan

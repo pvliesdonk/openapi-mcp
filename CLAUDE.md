@@ -4,7 +4,14 @@ A generic MCP server that builds its tools at runtime from any OpenAPI specifica
 
 ## Design
 <!-- DOMAIN-START -->
-<!-- Describe your service's design here. Kept across copier update. -->
+This sibling derives its domain tools from an OpenAPI spec at boot rather than
+hand-writing them. The only departure from a stock generated project is
+`make_server()` (loads+validates the spec, builds the upstream client, wires
+`OpenAPIProvider`) and the plain-Python spec/auth core in `domain.py`
+(`load_spec`, `resolve_base_url`, `required_schemes`, `build_upstream_client`).
+Inbound auth (who may call this server) is inherited from pvl-core; upstream
+auth (`OAPI_SECURITY_*`, how this server talks to the wrapped API) is the only
+new auth surface. Keep the two strictly separate.
 <!-- DOMAIN-END -->
 
 ## Project Structure

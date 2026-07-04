@@ -1,0 +1,24 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "openapi-mcp",
+    "version": "1.0.0",
+    "description": "Fixture API used by the openapi-mcp test suite."
+  },
+  "servers": [{ "url": "https://api.example.test" }],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    }
+  },
+  "security": [{ "ApiKeyAuth": [] }],
+  "paths": {
+    "/things": {
+      "get": {
+        "operationId": "list_things",
+        "summary": "List things",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

@@ -11,13 +11,23 @@ A generic MCP server that builds its tools at runtime from any OpenAPI specifica
 ## Features
 
 <!-- DOMAIN-START -->
-<!-- Replace with 3-7 bullets describing what this MCP server does. Kept across copier update. -->
+`openapi-mcp` builds its MCP tools at runtime from any OpenAPI specification,
+with no per-API code. Point one container image at a spec (URL or mounted file)
+plus upstream credentials, and it exposes the operations of that API as MCP
+tools via FastMCP's `OpenAPIProvider`.
 
-- **[Capability 1]:** one-sentence description of a user-visible feature.
-- **[Capability 2]:** one-sentence description of another capability.
-- **MCP tools:** N LLM-visible tools exposed; see `src/openapi_mcp/tools.py`.
-- **MCP resources:** M resources exposing domain state; see `src/openapi_mcp/resources.py`.
-- **MCP prompts:** K prompt templates; see `src/openapi_mcp/prompts.py`.
+Intended for **simple** APIs. Large or complex APIs, or ones using
+`oauth2`/`openIdConnect`/`mutualTLS` upstream auth, are better served by a
+purpose-built sibling. See
+[`docs/superpowers/specs/2026-07-04-openapi-generic-wrapper-design.md`](docs/superpowers/specs/2026-07-04-openapi-generic-wrapper-design.md)
+for the design and [`.env.example`](.env.example) for the full `OAPI_*` contract.
+
+```bash
+docker run --rm \
+  -e OAPI_SPEC_URL=https://api.example.com/openapi.json \
+  -e OAPI_SECURITY_APIKEYAUTH=your-key \
+  ghcr.io/pvliesdonk/openapi-mcp
+```
 <!-- DOMAIN-END -->
 
 ## What you can do with it

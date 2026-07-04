@@ -11,10 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from fastmcp_pvl_core import (
-    ServerConfig,
-    env,  # noqa: F401  — re-exported so CONFIG-FROM-ENV additions don't need a new import
-)
+from fastmcp_pvl_core import ServerConfig, env, env_float
 
 _ENV_PREFIX = "OAPI"
 
@@ -26,10 +23,10 @@ class ProjectConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
 
     # CONFIG-FIELDS-START — add domain fields below; kept across copier update
-    # (uncommenting the Path-typed examples below also requires adding
-    #  ``from pathlib import Path`` to the imports at the top of this file.)
-    # (example)
-    # vault_path: Path = Path("/data/vault")
+    spec_url: str | None = None
+    spec_path: str | None = None
+    api_base_url: str | None = None
+    http_timeout: float = 30.0
     # CONFIG-FIELDS-END
 
     @classmethod
@@ -38,7 +35,11 @@ class ProjectConfig:
         return cls(
             server=ServerConfig.from_env(_ENV_PREFIX),
             # CONFIG-FROM-ENV-START — populate domain fields below; kept across copier update
-            # (example)
-            # vault_path=Path(env(_ENV_PREFIX, "VAULT_PATH", "/data/vault")),
+            spec_url=env(_ENV_PREFIX, "SPEC_URL"),
+            spec_path=env(_ENV_PREFIX, "SPEC_PATH"),
+            api_base_url=env(_ENV_PREFIX, "API_BASE_URL"),
+            http_timeout=env_float(
+                _ENV_PREFIX, "HTTP_TIMEOUT", 30.0, strict=True, minimum=0.0
+            ),
             # CONFIG-FROM-ENV-END
         )

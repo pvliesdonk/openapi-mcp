@@ -22,6 +22,35 @@
       ]
     },
     {
+      "id": "spec_url",
+      "label": "OpenAPI spec URL",
+      "help": "Remote URL to fetch the OpenAPI spec from at startup. Use instead of a local spec file path.",
+      "type": "text",
+      "var": "OAPI_SPEC_URL"
+    },
+    {
+      "id": "spec_path",
+      "label": "OpenAPI spec file path",
+      "help": "Local path to an OpenAPI spec file (JSON or YAML). Use instead of a spec URL.",
+      "type": "text",
+      "var": "OAPI_SPEC_PATH"
+    },
+    {
+      "id": "api_base_url",
+      "label": "API base URL",
+      "help": "Base URL the generated tools call; overrides the spec's servers[] entry when set.",
+      "type": "text",
+      "var": "OAPI_API_BASE_URL"
+    },
+    {
+      "id": "http_timeout",
+      "label": "HTTP timeout (seconds)",
+      "help": "Timeout for outbound API calls made by generated tools. Default 30.",
+      "type": "text",
+      "var": "OAPI_HTTP_TIMEOUT",
+      "advancedGroup": "Server"
+    },
+    {
       "id": "base_url",
       "label": "Public base URL",
       "help": "e.g. https://mcp.example.com — required for OIDC and MCP Apps.",

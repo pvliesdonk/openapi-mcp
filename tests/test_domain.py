@@ -17,6 +17,7 @@ def test_config_reads_spec_and_timeout_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ProjectConfig.from_env picks up the OAPI_* spec/base/timeout vars."""
+    monkeypatch.delenv("OAPI_SPEC_PATH", raising=False)
     monkeypatch.setenv("OAPI_SPEC_URL", "https://api.example.test/openapi.json")
     monkeypatch.setenv("OAPI_API_BASE_URL", "https://api.example.test")
     monkeypatch.setenv("OAPI_HTTP_TIMEOUT", "12.5")

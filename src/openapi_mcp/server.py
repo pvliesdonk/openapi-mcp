@@ -13,6 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from fastmcp import FastMCP
+from fastmcp.server.providers.openapi import OpenAPIProvider
 from fastmcp_pvl_core import (
     ServerConfig,  # noqa: F401  — re-exported for downstream projects' convenience
     build_auth,
@@ -27,8 +28,14 @@ from fastmcp_pvl_core import (
 )
 
 from openapi_mcp._server_apps import register_apps
-from openapi_mcp._server_deps import server_lifespan
+from openapi_mcp._server_deps import aclose_client_sync, make_server_lifespan
 from openapi_mcp.config import ProjectConfig
+from openapi_mcp.domain import (
+    build_upstream_client,
+    load_spec,
+    resolve_base_url,
+    resolve_spec_source,
+)
 from openapi_mcp.prompts import register_prompts
 from openapi_mcp.resources import register_resources
 from openapi_mcp.tools import register_tools
@@ -56,15 +63,25 @@ def make_server(
     config = config or ProjectConfig.from_env()
     configure_logging_from_env()
 
-    # Operator overrides: SERVER_NAME renames this instance; INSTRUCTIONS
-    # replaces the default instructions text (the latter is the override that
-    # build_instructions' hint advertises). Both fall back when unset/empty.
-    server_name = env(_ENV_PREFIX, "SERVER_NAME", "openapi-mcp")
+    # Load + validate the spec BEFORE constructing FastMCP, so boot fails loud
+    # before a half-built server exists and name/instructions can derive from
+    # the spec's `info` block.
+    source = resolve_spec_source(config.spec_url, config.spec_path)
+    spec = load_spec(source)
+    info = spec.get("info") or {}
+    base_url = resolve_base_url(spec, config.api_base_url)
+
+    # Operator overrides win; otherwise derive identity from the spec.
+    server_name = env(_ENV_PREFIX, "SERVER_NAME") or info.get("title") or "openapi-mcp"
     instructions = env(_ENV_PREFIX, "INSTRUCTIONS") or build_instructions(
-        read_only=True,
+        read_only=False,
         env_prefix=_ENV_PREFIX,
-        domain_line="A generic MCP server that builds its tools at runtime from any OpenAPI specification.",
+        domain_line=info.get("description")
+        or "A generic MCP server built at runtime from an OpenAPI spec.",
     )
+
+    def _security_lookup(scheme_key: str) -> str | None:
+        return env(_ENV_PREFIX, f"SECURITY_{scheme_key.upper()}")
 
     auth = build_auth(config.server)
     auth_mode = resolve_auth_mode(config.server) if auth is not None else "none"
@@ -88,42 +105,42 @@ def make_server(
         auth_mode,
     )
 
-    mcp = FastMCP(
-        name=server_name,
-        instructions=instructions,
-        lifespan=server_lifespan,
-        auth=auth,
+    client = build_upstream_client(
+        spec=spec,
+        base_url=base_url,
+        timeout=config.http_timeout,
+        env_lookup=_security_lookup,
     )
+    try:
+        mcp = FastMCP(
+            name=server_name,
+            instructions=instructions,
+            lifespan=make_server_lifespan(client),
+            auth=auth,
+            providers=[OpenAPIProvider(openapi_spec=spec, client=client)],
+        )
 
-    wire_middleware_stack(mcp)
+        wire_middleware_stack(mcp)
 
-    register_tools(mcp)
-    register_resources(mcp)
-    register_prompts(mcp)
-    register_apps(mcp)
+        register_tools(mcp)
+        register_resources(mcp)
+        register_prompts(mcp)
+        register_apps(mcp)
 
-    register_server_info_tool(
-        mcp,
-        server_name=server_name,
-        server_version=pkg_ver,
-        # DOMAIN-UPSTREAM-START — wire upstream version reporting for servers
-        # that talk to a remote service (paperless-mcp, etc.). The provider is
-        # a zero-arg callable; the simplest pattern is a module-level upstream
-        # client (typically constructed from env vars at import time) whose
-        # version method is referenced here. ``CurrentContext()`` is a FastMCP
-        # DI marker — it only resolves to a live context when used as a
-        # parameter default in a tool/resource handler, so it cannot be called
-        # directly from a zero-arg provider.
-        # Uncomment the kwargs below as additional arguments to this call:
-        # upstream_version=lambda: _upstream_client.remote_version(),
-        # upstream_label="paperless",
-        # DOMAIN-UPSTREAM-END
-    )
+        register_server_info_tool(
+            mcp,
+            server_name=server_name,
+            server_version=pkg_ver,
+            # DOMAIN-UPSTREAM-START
+            # DOMAIN-UPSTREAM-END
+        )
 
-    # DOMAIN-WIRING-START — project-specific wiring (custom HTTP routes,
-    # transforms, mode toggles, alternative middleware, additional registrations);
-    # kept across copier update. Leave empty for projects that don't customise
-    # make_server() beyond the standard scaffold.
-    # DOMAIN-WIRING-END
+        # DOMAIN-WIRING-START — project-specific wiring; kept across copier update.
+        # DOMAIN-WIRING-END
+    except BaseException:
+        # Client built but boot failed before the lifespan took ownership:
+        # close it here so no socket leaks on a failed boot.
+        aclose_client_sync(client)
+        raise
 
     return mcp

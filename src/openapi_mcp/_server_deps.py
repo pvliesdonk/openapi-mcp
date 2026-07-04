@@ -2,9 +2,7 @@
 
 The OpenAPI-provider lifespan owns the upstream ``httpx.AsyncClient``: it is
 built in ``make_server()`` (the provider needs it at construction), threaded
-into ``make_server_lifespan``, and closed here on shutdown. ``server_lifespan``
-is the stock template lifespan, retained until ``server.py`` switches to the
-factory in Task 8.
+into ``make_server_lifespan``, and closed here on shutdown.
 """
 
 from __future__ import annotations
@@ -28,23 +26,6 @@ class LifespanState(TypedDict):
     """Shape of the lifespan context yielded to request handlers."""
 
     service: Service
-
-
-@asynccontextmanager
-async def server_lifespan(_mcp: object) -> AsyncIterator[dict[str, Any]]:
-    """Stock template lifespan (no upstream client).
-
-    Retained only until ``server.py`` switches to ``make_server_lifespan`` in
-    Task 8, which then removes this function.
-    """
-    service = Service()
-    await service.start()
-    logger.info("Service started")
-    try:
-        yield {"service": service}
-    finally:
-        await service.stop()
-        logger.info("Service stopped")
 
 
 def make_server_lifespan(

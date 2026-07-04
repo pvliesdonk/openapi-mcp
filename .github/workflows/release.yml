@@ -1,0 +1,493 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force version bump type (empty = auto from commits). patch/minor/major override commit analysis. Ignored when pre-release box is checked and an rc series is already active — the revision is advanced automatically.'
+        type: choice
+        default: ''
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+      prerelease:
+        description: 'Create a pre-release (rc channel — skips PyPI, catalog, registry, linux packages). Uncheck to cut a real release.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Detect active pre-release series
+        id: detect-rc
+        run: |
+          latest_rc=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' | head -1 || true)
+          latest_stable=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          in_rc_series=false
+          if [ -n "$latest_rc" ]; then
+            rc_base="${latest_rc%-rc.*}"
+            # Active only when the rc's stable base is not yet tagged AND the
+            # series targets a version newer than the latest stable release. An
+            # rc whose base is <= the latest stable is an abandoned/superseded
+            # series (e.g. a v2.0.0-rc left behind when the project jumped to
+            # v3.x); it must not trigger the force=prerelease revision bump,
+            # which from a stable base produces <current>-rc.1 instead of a
+            # bumped version.
+            newest=$(printf '%s\n%s\n' "$rc_base" "${latest_stable:-v0.0.0}" | sort -V | tail -1)
+            if ! git tag --list | grep -qx "$rc_base" \
+               && [ "$newest" = "$rc_base" ] && [ "$rc_base" != "${latest_stable:-v0.0.0}" ]; then
+              in_rc_series=true
+              echo "rc_series_target=$rc_base" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "in_rc_series=$in_rc_series" >> "$GITHUB_OUTPUT"
+
+      - name: Compute effective PSR force
+        id: compute-force
+        run: |
+          force="${{ inputs.force }}"
+          prerelease="${{ inputs.prerelease }}"
+          in_rc_series="${{ steps.detect-rc.outputs.in_rc_series }}"
+          if [[ "$prerelease" == "true" && "$force" == "" && "$in_rc_series" == "true" ]]; then
+            echo "effective_force=prerelease" >> "$GITHUB_OUTPUT"
+          else
+            echo "effective_force=$force" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reject force bump on active pre-release series
+        if: steps.detect-rc.outputs.in_rc_series == 'true' && inputs.prerelease == false && (inputs.force == 'patch' || inputs.force == 'minor' || inputs.force == 'major')
+        run: |
+          echo "::error::An active pre-release series is in progress targeting ${{ steps.detect-rc.outputs.rc_series_target }}."
+          echo "::error::force=patch/minor/major with prerelease=false applies an additional bump on top of the series target and will skip ${{ steps.detect-rc.outputs.rc_series_target }}."
+          echo "::error::To finalize the series as a stable release, dispatch with force='' and prerelease=false."
+          exit 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.6"
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Semantic Version Release
+        id: release
+        uses: python-semantic-release/python-semantic-release@v10.5.3
+        with:
+          github_token: ${{ secrets.RELEASE_TOKEN }}
+          git_committer_name: "github-actions"
+          git_committer_email: "actions@users.noreply.github.com"
+          force: ${{ steps.compute-force.outputs.effective_force }}
+          prerelease: ${{ inputs.prerelease }}
+          prerelease_token: rc
+
+      - name: Build package
+        if: steps.release.outputs.released == 'true'
+        run: uv build
+
+      - name: Generate SBOM
+        if: steps.release.outputs.released == 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM to GitHub Release
+        if: steps.release.outputs.released == 'true'
+        run: gh release upload ${{ steps.release.outputs.tag }} sbom.cdx.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to GitHub Release Assets
+        uses: python-semantic-release/publish-action@v10.5.3
+        if: steps.release.outputs.released == 'true'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.release.outputs.tag }}
+
+      - name: Upload build artifacts
+        if: steps.release.outputs.released == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+
+  publish-pypi:
+    needs: release
+    if: needs.release.outputs.released == 'true' && !inputs.prerelease
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pvliesdonk-openapi-mcp
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: dist/
+          print-hash: true
+          verbose: true
+
+  publish-docker:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version components
+        id: version
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=v${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ !inputs.prerelease }}
+            type=raw,value=v${{ steps.version.outputs.minor }},enable=${{ !inputs.prerelease }}
+            type=raw,value=v${{ steps.version.outputs.major }},enable=${{ !inputs.prerelease }}
+            type=raw,value=unstable,enable=${{ inputs.prerelease }}
+          labels: |
+            org.opencontainers.image.title=openapi-mcp
+            org.opencontainers.image.description=A generic MCP server that builds its tools at runtime from any OpenAPI specification.
+            org.opencontainers.image.vendor=pvliesdonk
+            io.modelcontextprotocol.server.name=io.github.pvliesdonk/openapi-mcp
+
+      - name: Build and push Docker image
+        id: build-push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build-push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM for Docker image
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-docker.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest Docker SBOM
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build-push.outputs.digest }}
+          sbom-path: sbom-docker.cdx.json
+          push-to-registry: true
+
+  publish-linux-packages:
+    needs: release
+    if: needs.release.outputs.released == 'true' && !inputs.prerelease
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Create output directory
+        run: mkdir -p dist
+
+      - name: Bake package version into postinstall script
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: sed -i "s|\${VERSION:-}|${VERSION}|" packaging/scripts/postinstall.sh
+
+      - name: Build .deb package
+        uses: burningalchemist/action-gh-nfpm@eeac96f42da23d091eec0d0088bf05cac0ceb9f3  # v1
+        id: deb
+        with:
+          nfpm_version: "2.41.1"
+          packager: deb
+          config: packaging/nfpm.yaml
+          target: dist/
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCH: amd64
+
+      - name: Build .rpm package
+        uses: burningalchemist/action-gh-nfpm@eeac96f42da23d091eec0d0088bf05cac0ceb9f3  # v1
+        id: rpm
+        with:
+          nfpm_version: "2.41.1"
+          packager: rpm
+          config: packaging/nfpm.yaml
+          target: dist/
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCH: x86_64
+
+      - name: Create versionless copies for stable download URLs
+        run: |
+          cp dist/openapi-mcp_*.deb dist/openapi-mcp_latest.deb
+          cp dist/openapi-mcp-*.rpm dist/openapi-mcp_latest.rpm
+
+      - name: Upload packages to GitHub Release
+        run: gh release upload ${{ needs.release.outputs.tag }} dist/*.deb dist/*.rpm --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-mcpb:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    env:
+      MCPB_VERSION: "2.1.2"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - name: Install mcpb CLI
+        run: npm install -g @anthropic-ai/mcpb@$MCPB_VERSION
+      - name: Render templates
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          mkdir -p build/mcpb/src
+          # Restrict substitution to ${VERSION} only — other ${...} tokens
+          # (e.g. ${DOCUMENTS}, ${user_config.*}) are runtime placeholders
+          # for the mcpb host and must survive intact.
+          envsubst '${VERSION}' < packaging/mcpb/manifest.json.in  > build/mcpb/manifest.json
+          envsubst '${VERSION}' < packaging/mcpb/pyproject.toml.in > build/mcpb/pyproject.toml
+          cp packaging/mcpb/src/server.py build/mcpb/src/server.py
+      - name: Validate and pack
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          mcpb validate build/mcpb/manifest.json
+          mkdir -p dist
+          mcpb pack build/mcpb "dist/openapi-mcp-${VERSION}.mcpb"
+      - name: Smoke-test bundle artifact
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          bundle="dist/openapi-mcp-${VERSION}.mcpb"
+          test -f "$bundle" || { echo "::error::bundle missing: $bundle"; exit 1; }
+
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          unzip -q "$bundle" -d "$work"
+
+          test -f "$work/manifest.json"  || { echo "::error::manifest.json missing from bundle"; exit 1; }
+          test -f "$work/pyproject.toml" || { echo "::error::pyproject.toml missing from bundle"; exit 1; }
+          test -f "$work/src/server.py"  || { echo "::error::src/server.py missing from bundle"; exit 1; }
+
+          bundled_version=$(jq -r .version "$work/manifest.json")
+          test "$bundled_version" = "$VERSION" \
+            || { echo "::error::manifest version $bundled_version != release $VERSION"; exit 1; }
+
+          jq -e '.server.mcp_config.env' "$work/manifest.json" > /dev/null \
+            || { echo "::error::manifest missing server.mcp_config.env"; exit 1; }
+          jq -e '.user_config' "$work/manifest.json" > /dev/null \
+            || { echo "::error::manifest missing user_config"; exit 1; }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mcpb-bundle
+          path: dist/openapi-mcp-*.mcpb
+          if-no-files-found: error
+
+  publish-mcpb:
+    needs: [release, build-mcpb]
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: mcpb-bundle
+          path: dist/
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload \
+            "${{ needs.release.outputs.tag }}" \
+            dist/openapi-mcp-*.mcpb \
+            --clobber \
+            --repo "${{ github.repository }}"
+
+  publish-claude-plugin-pr:
+    needs: release
+    if: needs.release.outputs.released == 'true' && !inputs.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout catalog repo
+        uses: actions/checkout@v7
+        with:
+          repository: pvliesdonk/claude-plugins
+          token: ${{ secrets.RELEASE_TOKEN }}
+          path: catalog
+      - name: Bump marketplace.json entry
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          cd catalog
+          NEW_ENTRY=$(jq -n \
+            --arg name    "openapi-mcp" \
+            --arg url     "https://github.com/pvliesdonk/openapi-mcp.git" \
+            --arg ref     "v$VERSION" \
+            --arg version "$VERSION" \
+            '{
+              name: $name,
+              source: {
+                source: "git-subdir",
+                url: $url,
+                path: ".claude-plugin/plugin",
+                ref: $ref
+              },
+              version: $version
+            }')
+          jq --arg name "openapi-mcp" \
+             --arg v    "$VERSION" \
+             --arg ref  "v$VERSION" \
+             --argjson new "$NEW_ENTRY" '
+            .plugins |= (
+              if any(.[]; .name == $name)
+              then map(if .name == $name then .version = $v | .source.ref = $ref else . end)
+              else . + [$new]
+              end
+            )
+          ' marketplace.json > marketplace.json.tmp
+          mv marketplace.json.tmp marketplace.json
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          path: catalog
+          token: ${{ secrets.RELEASE_TOKEN }}
+          branch: bump/openapi-mcp-${{ needs.release.outputs.version }}
+          title: "chore: bump openapi-mcp to v${{ needs.release.outputs.version }}"
+          body: |
+            Auto-generated bump from [openapi-mcp ${{ needs.release.outputs.tag }}](https://github.com/pvliesdonk/openapi-mcp/releases/tag/${{ needs.release.outputs.tag }}).
+          commit-message: "chore: bump openapi-mcp to v${{ needs.release.outputs.version }}"
+          committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+
+  publish-registry:
+    needs: [release, publish-pypi, publish-docker]
+    if: needs.release.outputs.released == 'true' && !inputs.prerelease
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Install mcp-publisher
+        env:
+          # v1.7.x is the first that requests the per-deployment OIDC audience
+          # the registry now requires (PR modelcontextprotocol/registry#1229,
+          # merged 2026-04-30 — production registry expects audience
+          # `https://registry.modelcontextprotocol.io`; v1.5.0 still requests
+          # `mcp-registry` and fails token exchange with HTTP 401).
+          MCP_PUBLISHER_VERSION: v1.7.6
+          MCP_PUBLISHER_SHA256: bcc96ca630cae4cf503b4550bd4a17462d42ad4819273bee56f4385bb059ddee
+        run: |
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" -o mcp-publisher.tar.gz
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c
+          tar xz -f mcp-publisher.tar.gz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish

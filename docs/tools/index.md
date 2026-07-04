@@ -1,0 +1,13 @@
+# Tools
+
+The tools registered in this server are listed below. See the
+[FastMCP tools documentation](https://gofastmcp.com/servers/tools)
+for the full tool API.
+
+<!-- DOMAIN-TOOLS-LIST-START -->
+## ping
+
+Health-check tool that returns `"pong"` if the service is alive.
+Replace with real tools per the scaffold in
+`src/openapi_mcp/tools.py`.
+<!-- DOMAIN-TOOLS-LIST-END -->

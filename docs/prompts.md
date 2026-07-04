@@ -1,0 +1,25 @@
+# Prompts
+
+MCP prompts are reusable prompt templates exposed to clients. The scaffold
+ships a minimal set defined in `src/openapi_mcp/prompts.py`; add
+domain-specific prompts there and document them in this page.
+
+## Example
+
+```python
+@mcp.prompt()
+def summarize(topic: str) -> str:
+    """Summarize the given topic in three sentences."""
+    return f"Write a three-sentence summary of: {topic}"
+```
+
+See the [FastMCP prompts documentation](https://gofastmcp.com/servers/prompts)
+for the full prompt API.
+
+<!-- DOMAIN-PROMPTS-LIST-START -->
+## Built-in prompts
+
+_None in the scaffold._ Define prompts with `@mcp.prompt(...)` decorators in
+`src/openapi_mcp/prompts.py` and list them here with their arguments,
+usage, and example output.
+<!-- DOMAIN-PROMPTS-LIST-END -->

@@ -1,0 +1,51 @@
+"""Tool registrations for OpenAPI MCP.
+
+See FastMCP tool docs: https://gofastmcp.com/servers/tools
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastmcp import FastMCP
+from fastmcp.dependencies import Depends
+
+from openapi_mcp._server_deps import get_service
+from openapi_mcp.domain import Service
+
+logger = logging.getLogger(__name__)
+
+
+def register_tools(mcp: FastMCP) -> None:
+    """Register all domain tools on *mcp*.
+
+    FastMCP tool reference: https://gofastmcp.com/servers/tools
+    """
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def ping(service: Service = Depends(get_service)) -> str:
+        """Health-check tool — returns ``"pong"`` if the service is alive.
+
+        Pattern: declare domain args, take the shared service via
+        ``Depends``, return a JSON-serialisable value. See
+        https://gofastmcp.com/servers/tools#async-tools for async + DI.
+        """
+        return await service.ping()
+
+    # Optional: attach Lucide-compatible SVG/PNG/ICO/JPEG icons to tools.
+    # Drop files into src/openapi_mcp/static/icons/, lift the imports
+    # and the STATIC constant to module level, and pick one of the patterns
+    # below.
+    #
+    # (At module level, above this function:)
+    # from pathlib import Path
+    # from fastmcp_pvl_core import make_icon, register_tool_icons
+    # STATIC = Path(__file__).parent / "static" / "icons"
+    #
+    # Bulk (call here at the end of register_tools, after all @mcp.tool defs;
+    # rename the mapping to your tool→file pairs):
+    # register_tool_icons(mcp, {"ping": "ping.svg"}, static_dir=STATIC)
+    #
+    # Per-tool decoration (replace the @mcp.tool line above; preserve the
+    # existing annotations to avoid losing readOnlyHint / etc.):
+    # @mcp.tool(icons=[make_icon(STATIC / "ping.svg")], annotations={"readOnlyHint": True})

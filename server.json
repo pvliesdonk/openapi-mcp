@@ -1,0 +1,172 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pvliesdonk/openapi-mcp",
+  "title": "OpenAPI MCP",
+  "description": "A generic MCP server that builds its tools at runtime from any OpenAPI specification.",
+  "version": "0.1.0",
+  "websiteUrl": "https://pvliesdonk.github.io/openapi-mcp/",
+  "repository": {
+    "url": "https://github.com/pvliesdonk/openapi-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "pvliesdonk-openapi-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FASTMCP_LOG_LEVEL",
+          "description": "Log level (DEBUG, INFO, WARNING, ERROR)",
+          "default": "INFO",
+          "choices": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR"
+          ]
+        },
+        {
+          "name": "OAPI_SERVER_NAME",
+          "description": "MCP server name shown to clients",
+          "default": "openapi-mcp"
+        },
+        {
+          "name": "OAPI_BEARER_TOKEN",
+          "description": "Bearer token for authentication",
+          "isSecret": true
+        },
+        {
+          "name": "OAPI_AUTH_MODE",
+          "description": "OIDC auth mode: 'remote' (JWKS validation) or 'oidc-proxy' (OAuth proxy). Auto-detected if not set."
+        },
+        {
+          "name": "OAPI_BASE_URL",
+          "description": "Public base URL of this server (required for OIDC)"
+        },
+        {
+          "name": "OAPI_OIDC_CONFIG_URL",
+          "description": "OIDC discovery endpoint URL"
+        },
+        {
+          "name": "OAPI_OIDC_CLIENT_ID",
+          "description": "OIDC client ID"
+        },
+        {
+          "name": "OAPI_OIDC_CLIENT_SECRET",
+          "description": "OIDC client secret",
+          "isSecret": true
+        },
+        {
+          "name": "OAPI_OIDC_JWT_SIGNING_KEY",
+          "description": "Signing key for OIDC session JWTs (critical on Linux/Docker)",
+          "isSecret": true
+        },
+        {
+          "name": "OAPI_OIDC_AUDIENCE",
+          "description": "Expected OIDC token audience"
+        },
+        {
+          "name": "OAPI_OIDC_REQUIRED_SCOPES",
+          "description": "Space-separated required OIDC scopes",
+          "default": "openid"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/pvliesdonk/openapi-mcp:v0.1.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:{--port}/mcp"
+      },
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--port",
+          "default": "8000",
+          "description": "Port for the HTTP transport"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "FASTMCP_LOG_LEVEL",
+          "description": "Log level (DEBUG, INFO, WARNING, ERROR)",
+          "default": "INFO",
+          "choices": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR"
+          ]
+        },
+        {
+          "name": "OAPI_KV_STORE_URL",
+          "description": "Persistent-state backend URL for pvl-core subsystems. Schemes: file:///path (survives restarts), memory:// (dev/ephemeral).",
+          "default": "file:///data/state"
+        },
+        {
+          "name": "OAPI_SERVER_NAME",
+          "description": "MCP server name shown to clients",
+          "default": "openapi-mcp"
+        },
+        {
+          "name": "PUID",
+          "description": "Run as this UID (Docker entrypoint)",
+          "format": "number",
+          "default": "1000"
+        },
+        {
+          "name": "PGID",
+          "description": "Run as this GID (Docker entrypoint)",
+          "format": "number",
+          "default": "1000"
+        },
+        {
+          "name": "OAPI_BEARER_TOKEN",
+          "description": "Bearer token for authentication",
+          "isSecret": true
+        },
+        {
+          "name": "OAPI_AUTH_MODE",
+          "description": "OIDC auth mode: 'remote' (JWKS validation) or 'oidc-proxy' (OAuth proxy). Auto-detected if not set."
+        },
+        {
+          "name": "OAPI_BASE_URL",
+          "description": "Public base URL of this server (required for OIDC)"
+        },
+        {
+          "name": "OAPI_OIDC_CONFIG_URL",
+          "description": "OIDC discovery endpoint URL"
+        },
+        {
+          "name": "OAPI_OIDC_CLIENT_ID",
+          "description": "OIDC client ID"
+        },
+        {
+          "name": "OAPI_OIDC_CLIENT_SECRET",
+          "description": "OIDC client secret",
+          "isSecret": true
+        },
+        {
+          "name": "OAPI_OIDC_JWT_SIGNING_KEY",
+          "description": "Signing key for OIDC session JWTs (critical on Linux/Docker)",
+          "isSecret": true
+        },
+        {
+          "name": "OAPI_OIDC_AUDIENCE",
+          "description": "Expected OIDC token audience"
+        },
+        {
+          "name": "OAPI_OIDC_REQUIRED_SCOPES",
+          "description": "Space-separated required OIDC scopes",
+          "default": "openid"
+        }
+      ]
+    }
+  ]
+}

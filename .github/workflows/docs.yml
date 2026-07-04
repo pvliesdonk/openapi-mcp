@@ -1,0 +1,118 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Include event_name so push/PR/release runs on the same ref get separate
+# concurrency buckets and don't cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Validation only: strict docs build. Never deploys; publishing happens
+    # in `deploy` on release:published.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # On release events the triggering tag may move after the workflow is
+          # queued (semantic-release pushes a version-bump commit); build main.
+          ref: ${{ github.event_name == 'release' && 'main' || github.ref }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --no-default-groups --group docs --frozen
+
+      - name: Build documentation
+        run: uv run mkdocs build --strict
+
+      - name: Install browser test deps
+        run: uv sync --no-default-groups --all-extras --group docs --group browser --frozen
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run config-wizard browser tests
+        # Both the template-owned smoke suite and the project-owned domain suite
+        # (test_config_wizard_domain.py). -m browser selects the browser-marked
+        # tests in each; the seeded domain placeholder is skipped until a
+        # consumer replaces it with real assertions.
+        run: uv run pytest tests/test_config_wizard_smoke.py tests/test_config_wizard_domain.py -v -m browser
+
+  deploy:
+    # Publish versioned docs with mike, serving from the gh-pages branch:
+    #   stable release (prerelease=false) -> version <major.minor> + `latest` alias (default)
+    #   rc prerelease  (prerelease=true)  -> single rolling `unstable` version
+    #
+    # One-time setup before the first deploy (per-project, cannot be templated):
+    #   1. Seed gh-pages:
+    #        uv run mike deploy --push --update-aliases unstable --title "unstable (<ver>)"
+    #   2. Repo Settings -> Pages -> Deploy from a branch -> gh-pages / (root).
+    #   Order matters: seed (1) before switching source (2) so the site is never empty.
+    if: github.event_name == 'release'
+    needs: build
+    # Serialize all release deploys (no cancellation) so two releases close
+    # together never push to gh-pages concurrently.
+    concurrency:
+      group: ${{ github.workflow }}-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # `needs: build` is a sequencing gate only — mike drives its own
+      # build internally; no artifact is passed from the build job.
+      - uses: actions/checkout@v7
+        with:
+          # Full history required: mike reads and pushes the gh-pages branch.
+          fetch-depth: 0
+          ref: main
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --no-default-groups --group docs --frozen
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish versioned docs
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          # GitHub renders the JSON boolean as the string "true"/"false".
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          version="${TAG#v}"
+          if [ "$PRERELEASE" = "true" ]; then
+            uv run mike deploy --push unstable --title "unstable (${version})"
+          else
+            minor="$(echo "$version" | cut -d. -f1-2)"
+            uv run mike deploy --push --update-aliases --title "$version" "$minor" latest
+            uv run mike set-default --push latest
+          fi

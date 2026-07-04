@@ -1,0 +1,129 @@
+"""OpenAPI MCP — FastMCP server entry point.
+
+Composes the primitives from ``fastmcp-pvl-core`` into a
+project-specific ``make_server()``.  See
+https://gofastmcp.com/servers for the FastMCP server surface and
+``fastmcp-pvl-core``'s README for the composable helpers used below.
+"""
+
+from __future__ import annotations
+
+import logging
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+from fastmcp import FastMCP
+from fastmcp_pvl_core import (
+    ServerConfig,  # noqa: F401  — re-exported for downstream projects' convenience
+    build_auth,
+    build_event_store,  # noqa: F401  — re-exported for downstream projects' convenience
+    build_instructions,
+    build_kv_store,  # noqa: F401  — re-exported for downstream projects' convenience
+    configure_logging_from_env,
+    env,
+    register_server_info_tool,
+    resolve_auth_mode,
+    wire_middleware_stack,
+)
+
+from openapi_mcp._server_apps import register_apps
+from openapi_mcp._server_deps import server_lifespan
+from openapi_mcp.config import ProjectConfig
+from openapi_mcp.prompts import register_prompts
+from openapi_mcp.resources import register_resources
+from openapi_mcp.tools import register_tools
+
+logger = logging.getLogger(__name__)
+
+_ENV_PREFIX = "OAPI"
+
+
+def make_server(
+    *,
+    transport: str = "stdio",
+    config: ProjectConfig | None = None,
+) -> FastMCP:
+    """Construct the OpenAPI MCP FastMCP server.
+
+    Args:
+        transport: ``"stdio"`` / ``"http"`` / ``"sse"``.  Used here for
+            logging only.
+        config: Optional pre-loaded config; default loads from env.
+
+    Returns:
+        A configured :class:`fastmcp.FastMCP` instance.
+    """
+    config = config or ProjectConfig.from_env()
+    configure_logging_from_env()
+
+    # Operator overrides: SERVER_NAME renames this instance; INSTRUCTIONS
+    # replaces the default instructions text (the latter is the override that
+    # build_instructions' hint advertises). Both fall back when unset/empty.
+    server_name = env(_ENV_PREFIX, "SERVER_NAME", "openapi-mcp")
+    instructions = env(_ENV_PREFIX, "INSTRUCTIONS") or build_instructions(
+        read_only=True,
+        env_prefix=_ENV_PREFIX,
+        domain_line="A generic MCP server that builds its tools at runtime from any OpenAPI specification.",
+    )
+
+    auth = build_auth(config.server)
+    auth_mode = resolve_auth_mode(config.server) if auth is not None else "none"
+    if auth_mode == "none":
+        logger.warning(
+            "No auth configured — server accepts unauthenticated connections"
+        )
+    else:
+        logger.info("Auth enabled: mode=%s", auth_mode)
+
+    try:
+        pkg_ver = _pkg_version("pvliesdonk-openapi-mcp")
+    except PackageNotFoundError:
+        pkg_ver = "unknown"
+
+    logger.info(
+        "Server config: version=%s name=%s transport=%s auth=%s",
+        pkg_ver,
+        server_name,
+        transport,
+        auth_mode,
+    )
+
+    mcp = FastMCP(
+        name=server_name,
+        instructions=instructions,
+        lifespan=server_lifespan,
+        auth=auth,
+    )
+
+    wire_middleware_stack(mcp)
+
+    register_tools(mcp)
+    register_resources(mcp)
+    register_prompts(mcp)
+    register_apps(mcp)
+
+    register_server_info_tool(
+        mcp,
+        server_name=server_name,
+        server_version=pkg_ver,
+        # DOMAIN-UPSTREAM-START — wire upstream version reporting for servers
+        # that talk to a remote service (paperless-mcp, etc.). The provider is
+        # a zero-arg callable; the simplest pattern is a module-level upstream
+        # client (typically constructed from env vars at import time) whose
+        # version method is referenced here. ``CurrentContext()`` is a FastMCP
+        # DI marker — it only resolves to a live context when used as a
+        # parameter default in a tool/resource handler, so it cannot be called
+        # directly from a zero-arg provider.
+        # Uncomment the kwargs below as additional arguments to this call:
+        # upstream_version=lambda: _upstream_client.remote_version(),
+        # upstream_label="paperless",
+        # DOMAIN-UPSTREAM-END
+    )
+
+    # DOMAIN-WIRING-START — project-specific wiring (custom HTTP routes,
+    # transforms, mode toggles, alternative middleware, additional registrations);
+    # kept across copier update. Leave empty for projects that don't customise
+    # make_server() beyond the standard scaffold.
+    # DOMAIN-WIRING-END
+
+    return mcp

@@ -1,0 +1,132 @@
+site_name: openapi-mcp
+site_url: https://pvliesdonk.github.io/openapi-mcp/
+site_description: A generic MCP server that builds its tools at runtime from any OpenAPI specification.
+repo_url: https://github.com/pvliesdonk/openapi-mcp
+repo_name: pvliesdonk/openapi-mcp
+edit_uri: edit/main/docs/
+
+# Internal dev docs live under docs/ but are NOT part of the published site.
+# Keep this set in lockstep with the Vale exclusion (ci.yml vale_flags glob +
+# the pre-commit `- id: vale` exclude); see the Documentation Conventions
+# section in CLAUDE.md. superpowers/ is also gitignored.
+exclude_docs: |
+  design/**
+  decisions/**
+  superpowers/**
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  version:
+    provider: mike
+    default: latest
+
+extra_javascript:
+  - path: javascripts/config-wizard/wizard.js
+    type: module
+
+extra_css:
+  - stylesheets/config-wizard.css
+
+plugins:
+  - search
+  # Generates llms.txt + llms-full.txt for the README badge.
+  # Sections mirror `nav:` below — keep them aligned when customising
+  # (both blocks are sentinel-protected so customise both as a unit).
+  # `guides/*.md` and `deployment/*.md` use globs deliberately so new pages
+  # in those directories are auto-indexed without a sections-list update.
+  - llmstxt:
+      full_output: llms-full.txt
+      sections:
+        # PROJECT-LLMSTXT-SECTIONS-START — keep aligned with `nav:` below;
+        # kept across copier update.
+        Getting Started:
+          - index.md
+          - installation.md
+          - configuration.md
+          - configuration-generator.md
+        Guides:
+          - guides/*.md
+        MCP Interface:
+          - tools/index.md
+          - prompts.md
+        Deployment:
+          - deployment/*.md
+        # PROJECT-LLMSTXT-SECTIONS-END
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_bases: true
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            docstring_style: google
+            merge_init_into_class: true
+            show_if_no_docstring: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: false
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  # PROJECT-NAV-START — replace with your real navigation; kept across copier
+  # update. Keep aligned with the `llmstxt` plugin's sentinel-protected
+  # `sections:` block above.
+  - Home: index.md
+  - Getting Started:
+      - Installation: installation.md
+      - Configuration: configuration.md
+      - Configuration Generator: configuration-generator.md
+  - Guides:
+      - Authentication: guides/authentication.md
+  - MCP Interface:
+      - Tools: tools/index.md
+      - Prompts: prompts.md
+  - Deployment:
+      - Docker: deployment/docker.md
+      - OIDC Authentication: deployment/oidc.md
+      - Claude Desktop: deployment/claude-desktop.md
+  # PROJECT-NAV-END

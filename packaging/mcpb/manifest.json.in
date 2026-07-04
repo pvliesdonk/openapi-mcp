@@ -1,0 +1,64 @@
+{
+  "manifest_version": "0.4",
+  "name": "openapi-mcp",
+  "display_name": "OpenAPI MCP",
+  "version": "${VERSION}",
+  "description": "A generic MCP server that builds its tools at runtime from any OpenAPI specification.",
+  "long_description": "A generic MCP server that builds its tools at runtime from any OpenAPI specification.",
+  "author": {
+    "name": "pvliesdonk",
+    "url": "https://github.com/pvliesdonk"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pvliesdonk/openapi-mcp.git"
+  },
+  "homepage": "https://pvliesdonk.github.io/openapi-mcp/",
+  "documentation": "https://pvliesdonk.github.io/openapi-mcp/",
+  "support": "https://github.com/pvliesdonk/openapi-mcp/issues",
+  "license": "UNLICENSED",
+  "keywords": [],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uvx",
+      "args": ["--from", "pvliesdonk-openapi-mcp[all]==${VERSION}", "openapi-mcp", "serve"],
+      "env": {
+        "OAPI_SERVER_NAME": "${user_config.server_name}",
+        "OAPI_READ_ONLY":   "${user_config.read_only}",
+        "FASTMCP_LOG_LEVEL":            "${user_config.log_level}"
+      }
+    }
+  },
+  "user_config": {
+    "server_name": {
+      "type": "string",
+      "title": "Server name",
+      "description": "Name shown in the Claude tool list.",
+      "required": false,
+      "default": "openapi-mcp"
+    },
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only mode",
+      "description": "When true, write-tagged tools are hidden.",
+      "required": false,
+      "default": true
+    },
+    "log_level": {
+      "type": "string",
+      "title": "Log level",
+      "description": "One of: DEBUG, INFO, WARNING, ERROR.",
+      "required": false,
+      "default": "INFO"
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.11,<4.0"
+    }
+  }
+}

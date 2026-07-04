@@ -1,0 +1,16 @@
+# Changes here will be overwritten by `copier update`.
+_commit: v2.10.2
+_src_path: https://github.com/pvliesdonk/fastmcp-server-template.git
+docker_registry: ghcr.io/pvliesdonk
+domain_description: A generic MCP server that builds its tools at runtime from any
+    OpenAPI specification.
+enable_authorization: false
+enable_structural_gate: true
+env_prefix: OAPI
+github_org: pvliesdonk
+human_name: OpenAPI MCP
+include_mcp_apps_scaffold: false
+project_name: openapi-mcp
+pypi_name: pvliesdonk-openapi-mcp
+python_module: openapi_mcp
+structural_gate_assert_clean_tree: true

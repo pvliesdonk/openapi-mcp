@@ -10,12 +10,16 @@ they unit-test without a server:
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import yaml
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class BootConfigError(RuntimeError):
@@ -200,3 +204,102 @@ def required_schemes(spec: dict[str, Any]) -> list[SchemeRef]:
             )
         result.append(_make_scheme_ref(key, defn))
     return result
+
+
+def _set_unique(mapping: dict[str, str], key: str, value: str, scheme_key: str) -> None:
+    """Set ``mapping[key] = value``, failing loud if *key* is already taken.
+
+    Raises:
+        BootConfigError: if *key* was already set by another required scheme.
+    """
+    if key in mapping:
+        raise BootConfigError(
+            f"scheme {scheme_key!r} injects into {key!r}, which another "
+            "required scheme already set; two schemes cannot share the same "
+            "header or query key"
+        )
+    mapping[key] = value
+
+
+def _inject_scheme(
+    ref: SchemeRef,
+    value: str,
+    headers: dict[str, str],
+    params: dict[str, str],
+) -> None:
+    """Inject one scheme's credential into *headers* or *params* in place.
+
+    Raises:
+        BootConfigError: on an unsupported type/location/scheme or a
+            malformed ``basic`` value.
+    """
+    if ref.type == "apiKey":
+        if ref.location == "header" and ref.name:
+            _set_unique(headers, ref.name, value, ref.key)
+        elif ref.location == "query" and ref.name:
+            _set_unique(params, ref.name, value, ref.key)
+        else:
+            raise BootConfigError(
+                f"apiKey scheme {ref.key!r} has unsupported location "
+                f"{ref.location!r} / name {ref.name!r}"
+            )
+        return
+    if ref.type == "http":
+        scheme = (ref.scheme or "").lower()
+        if scheme == "bearer":
+            _set_unique(headers, "Authorization", f"Bearer {value}", ref.key)
+        elif scheme == "basic":
+            if ":" not in value:
+                raise BootConfigError(
+                    f"http basic scheme {ref.key!r} needs a 'user:pass' value"
+                )
+            user, _, password = value.partition(":")
+            token = base64.b64encode(f"{user}:{password}".encode()).decode()
+            _set_unique(headers, "Authorization", f"Basic {token}", ref.key)
+        else:
+            raise BootConfigError(
+                f"http scheme {ref.key!r} uses unsupported scheme {ref.scheme!r} "
+                "(only bearer/basic are in scope)"
+            )
+        return
+    raise BootConfigError(
+        f"scheme {ref.key!r} of type {ref.type!r} needs a dedicated server "
+        "(oauth2/openIdConnect/mutualTLS are out of scope)"
+    )
+
+
+def build_upstream_client(
+    *,
+    spec: dict[str, Any],
+    base_url: str,
+    timeout: float,
+    env_lookup: Callable[[str], str | None],
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> httpx.AsyncClient:
+    """Build an authenticated upstream client for the wrapped API.
+
+    Raises:
+        BootConfigError: on a missing credential or an unsupported/malformed
+            scheme (message names the scheme key and its ``OAPI_SECURITY_*``
+            env var).
+    """
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    for ref in required_schemes(spec):
+        value = env_lookup(ref.key)
+        if not value:
+            raise BootConfigError(
+                f"missing upstream credential for scheme {ref.key!r}: "
+                f"set OAPI_SECURITY_{ref.key.upper()}"
+            )
+        _inject_scheme(ref, value, headers, params)
+
+    kwargs: dict[str, Any] = {
+        "base_url": base_url,
+        "timeout": timeout,
+        "headers": headers,
+        "params": params,
+    }
+    if transport is not None:
+        kwargs["transport"] = transport
+    return httpx.AsyncClient(**kwargs)

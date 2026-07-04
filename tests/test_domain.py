@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -195,3 +196,158 @@ def test_required_schemes_undefined_reference_fails_loud() -> None:
 
 def test_required_schemes_no_security_returns_empty() -> None:
     assert domain.required_schemes({"openapi": "3.0.0", "paths": {}}) == []
+
+
+def _one_scheme_spec(defn: dict[str, object], key: str = "Auth") -> dict[str, object]:
+    return {
+        "openapi": "3.0.0",
+        "components": {"securitySchemes": {key: defn}},
+        "security": [{key: []}],
+        "paths": {},
+    }
+
+
+def _lookup(mapping: dict[str, str]) -> Callable[[str], str | None]:
+    return lambda key: mapping.get(key)
+
+
+async def test_build_client_apikey_header() -> None:
+    spec = _one_scheme_spec({"type": "apiKey", "in": "header", "name": "X-API-Key"})
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({"Auth": "secret-key"}),
+    )
+    try:
+        assert client.headers["X-API-Key"] == "secret-key"
+        assert str(client.base_url) == "https://api.example.test"
+    finally:
+        await client.aclose()
+
+
+async def test_build_client_apikey_query() -> None:
+    spec = _one_scheme_spec({"type": "apiKey", "in": "query", "name": "api_key"})
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({"Auth": "qval"}),
+    )
+    try:
+        assert client.params.get("api_key") == "qval"
+    finally:
+        await client.aclose()
+
+
+async def test_build_client_http_bearer() -> None:
+    spec = _one_scheme_spec({"type": "http", "scheme": "bearer"})
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({"Auth": "tok123"}),
+    )
+    try:
+        assert client.headers["Authorization"] == "Bearer tok123"
+    finally:
+        await client.aclose()
+
+
+async def test_build_client_http_basic() -> None:
+    import base64
+
+    spec = _one_scheme_spec({"type": "http", "scheme": "basic"})
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({"Auth": "alice:s3cret"}),
+    )
+    try:
+        expected = base64.b64encode(b"alice:s3cret").decode()
+        assert client.headers["Authorization"] == f"Basic {expected}"
+    finally:
+        await client.aclose()
+
+
+def test_build_client_missing_credential_fails_loud() -> None:
+    spec = _one_scheme_spec({"type": "apiKey", "in": "header", "name": "X-API-Key"})
+    with pytest.raises(domain.BootConfigError, match="OAPI_SECURITY_AUTH"):
+        domain.build_upstream_client(
+            spec=spec,
+            base_url="https://api.example.test",
+            timeout=5.0,
+            env_lookup=_lookup({}),
+        )
+
+
+def test_build_client_oauth2_fails_loud() -> None:
+    spec = _one_scheme_spec({"type": "oauth2", "flows": {}})
+    with pytest.raises(domain.BootConfigError, match="dedicated server"):
+        domain.build_upstream_client(
+            spec=spec,
+            base_url="https://api.example.test",
+            timeout=5.0,
+            env_lookup=_lookup({"Auth": "x"}),
+        )
+
+
+def test_build_client_basic_without_colon_fails_loud() -> None:
+    spec = _one_scheme_spec({"type": "http", "scheme": "basic"})
+    with pytest.raises(domain.BootConfigError, match="user:pass"):
+        domain.build_upstream_client(
+            spec=spec,
+            base_url="https://api.example.test",
+            timeout=5.0,
+            env_lookup=_lookup({"Auth": "no-colon"}),
+        )
+
+
+def _two_scheme_spec() -> dict[str, object]:
+    return {
+        "openapi": "3.0.0",
+        "components": {
+            "securitySchemes": {
+                "HeaderAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+                "QueryAuth": {"type": "apiKey", "in": "query", "name": "api_key"},
+            }
+        },
+        "security": [{"HeaderAuth": [], "QueryAuth": []}],
+        "paths": {},
+    }
+
+
+async def test_build_client_multiple_schemes_accumulate() -> None:
+    client = domain.build_upstream_client(
+        spec=_two_scheme_spec(),
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({"HeaderAuth": "hval", "QueryAuth": "qval"}),
+    )
+    try:
+        assert client.headers["X-API-Key"] == "hval"
+        assert client.params.get("api_key") == "qval"
+    finally:
+        await client.aclose()
+
+
+def test_build_client_scheme_collision_fails_loud() -> None:
+    spec = {
+        "openapi": "3.0.0",
+        "components": {
+            "securitySchemes": {
+                "A": {"type": "apiKey", "in": "header", "name": "Authorization"},
+                "B": {"type": "http", "scheme": "bearer"},
+            }
+        },
+        "security": [{"A": [], "B": []}],
+        "paths": {},
+    }
+    with pytest.raises(domain.BootConfigError, match="another required scheme"):
+        domain.build_upstream_client(
+            spec=spec,
+            base_url="https://api.example.test",
+            timeout=5.0,
+            env_lookup=_lookup({"A": "tok", "B": "tok2"}),
+        )

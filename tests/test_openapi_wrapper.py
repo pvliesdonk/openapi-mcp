@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -14,6 +15,7 @@ from openapi_mcp.server import make_server
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 
 async def test_lifespan_closes_client() -> None:
@@ -91,6 +93,60 @@ async def test_calling_provider_tool_injects_credential(
     async with Client(server) as client:
         await client.call_tool("list_things", {})
     assert seen["x-api-key"] == "test-key"
+
+
+def _query_scheme_spec() -> dict[str, Any]:
+    """A petstore-min variant whose only scheme is apiKey-in-query."""
+    return {
+        "openapi": "3.0.3",
+        "info": {"title": "openapi-mcp", "version": "1.0.0"},
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {
+            "securitySchemes": {
+                "ApiKeyAuth": {"type": "apiKey", "in": "query", "name": "api_key"}
+            }
+        },
+        "security": [{"ApiKeyAuth": []}],
+        "paths": {
+            "/things": {
+                "get": {
+                    "operationId": "list_things",
+                    "summary": "List things",
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+
+async def test_calling_provider_tool_injects_query_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tool call routes upstream with the apiKey-query credential on the URL.
+
+    Query injection rides the ``_UpstreamAuth`` auth flow — the same mechanism
+    as header injection — which runs on the provider's ``client.send()`` path
+    and merges the credential onto the request URL. It must therefore be
+    asserted on the outgoing request URL, not on ``client.params`` at
+    construction (which the provider bypasses).
+    """
+    spec_path = tmp_path / "query-spec.json"
+    spec_path.write_text(json.dumps(_query_scheme_spec()), encoding="utf-8")
+    monkeypatch.setenv("OAPI_SPEC_PATH", str(spec_path))
+
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["api_key"] = request.url.params.get("api_key")
+        return httpx.Response(200, json=[{"id": 1}])
+
+    monkeypatch.setattr(
+        "openapi_mcp.server.build_upstream_client", _mock_upstream_build(handler)
+    )
+    server = make_server()
+    async with Client(server) as client:
+        await client.call_tool("list_things", {})
+    assert seen["api_key"] == "test-key"
 
 
 def test_missing_spec_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:

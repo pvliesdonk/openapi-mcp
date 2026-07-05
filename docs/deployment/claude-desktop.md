@@ -36,9 +36,7 @@ Otherwise, add the server to your Claude Desktop configuration file. The path va
     "openapi-mcp": {
       "command": "openapi-mcp",
       "args": ["serve"],
-      "env": {
-        "OAPI_READ_ONLY": "true"
-      }
+      "env": {}
     }
   }
 }
@@ -51,8 +49,26 @@ Restart the application to pick up the new configuration. If the server connects
 ## Configuration examples
 
 <!-- DOMAIN-CLAUDE-DESKTOP-START -->
-<!-- Add domain-specific Claude Desktop configuration examples here.
-     Kept across copier update. -->
+`openapi-mcp` needs a spec source in `env` (exactly one of `OAPI_SPEC_URL` /
+`OAPI_SPEC_PATH`), plus a credential per referenced security scheme. A working
+example:
+
+```json
+{
+  "mcpServers": {
+    "openapi-mcp": {
+      "command": "openapi-mcp",
+      "args": ["serve"],
+      "env": {
+        "OAPI_SPEC_URL": "https://api.example.com/openapi.json",
+        "OAPI_SECURITY_APIKEYAUTH": "your-key"
+      }
+    }
+  }
+}
+```
+
+See [Configuration](../configuration.md) for the full `OAPI_*` contract.
 <!-- DOMAIN-CLAUDE-DESKTOP-END -->
 
 ## Troubleshooting
@@ -76,9 +92,7 @@ macOS/Linux:
     "openapi-mcp": {
       "command": "/Users/me/.venvs/mcp/bin/openapi-mcp",
       "args": ["serve"],
-      "env": {
-        "OAPI_READ_ONLY": "true"
-      }
+      "env": {}
     }
   }
 }
@@ -92,9 +106,7 @@ Windows (`Scripts\` not `bin\`, `.exe` suffix):
     "openapi-mcp": {
       "command": "C:\\Users\\me\\.venvs\\mcp\\Scripts\\openapi-mcp.exe",
       "args": ["serve"],
-      "env": {
-        "OAPI_READ_ONLY": "true"
-      }
+      "env": {}
     }
   }
 }

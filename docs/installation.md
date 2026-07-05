@@ -21,7 +21,22 @@ uv sync --all-extras --all-groups
 ```
 
 <!-- DOMAIN-INSTALL-EXTRA-START -->
-<!-- Project-specific notes for installation go here; kept across copier
-     update. (E.g. system dependencies, optional extras, custom configuration
-     steps.) -->
+## Linux packages (.deb / .rpm)
+
+Download the `.deb` or `.rpm` package from the
+[GitHub Releases](https://github.com/pvliesdonk/openapi-mcp/releases) page. Both
+install a hardened systemd unit and source environment configuration from
+`/etc/openapi-mcp/env` (copy the shipped `/etc/openapi-mcp/env.example`).
+
+## Claude Desktop (.mcpb bundle)
+
+Download the `.mcpb` bundle from the
+[GitHub Releases](https://github.com/pvliesdonk/openapi-mcp/releases) page and
+double-click to install, or run:
+
+```bash
+mcpb install openapi-mcp-<version>.mcpb
+```
+
+For manual setup, see [Claude Desktop deployment](deployment/claude-desktop.md).
 <!-- DOMAIN-INSTALL-EXTRA-END -->

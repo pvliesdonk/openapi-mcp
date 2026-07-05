@@ -72,7 +72,7 @@ OAPI_OIDC_JWT_SIGNING_KEY=$(openssl rand -hex 32)
 ### 3. Start with HTTP transport
 
 ```bash
-mcp-server serve --transport http --port 8000
+openapi-mcp serve --transport http --port 8000
 ```
 
 ## Architecture
@@ -80,7 +80,7 @@ mcp-server serve --transport http --port 8000
 The server uses FastMCP's built-in `OIDCProxy` auth provider (not the external `mcp-auth-proxy` sidecar). The authentication flow:
 
 ```
-Client → mcp-server (with OIDCProxy) → OIDC Provider (Authelia/Keycloak)
+Client → openapi-mcp (with OIDCProxy) → OIDC Provider (Authelia/Keycloak)
 ```
 
 1. Client connects to the MCP server
@@ -93,7 +93,7 @@ Client → mcp-server (with OIDCProxy) → OIDC Provider (Authelia/Keycloak)
 
 ```yaml
 services:
-  mcp-server:
+  openapi-mcp:
     image: ghcr.io/pvliesdonk/openapi-mcp:latest
     env_file: .env
     volumes:
@@ -103,9 +103,9 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.mcp-server.rule=Host(`mcp.example.com`)"
-      - "traefik.http.routers.mcp-server.tls.certresolver=letsencrypt"
-      - "traefik.http.services.mcp-server.loadbalancer.server.port=8000"
+      - "traefik.http.routers.openapi-mcp.rule=Host(`mcp.example.com`)"
+      - "traefik.http.routers.openapi-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.openapi-mcp.loadbalancer.server.port=8000"
     networks:
       - traefik
 
@@ -120,7 +120,6 @@ networks:
 With the corresponding `.env`:
 
 ```bash
-OAPI_READ_ONLY=true
 OAPI_BASE_URL=https://mcp.example.com
 OAPI_OIDC_CONFIG_URL=https://auth.example.com/.well-known/openid-configuration
 OAPI_OIDC_CLIENT_ID=my-mcp-server

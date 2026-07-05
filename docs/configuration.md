@@ -34,7 +34,7 @@ via these `OAPI_*` variables (see `.env.example` for a copy-paste template).
 | `OAPI_SPEC_URL` | URL of the OpenAPI spec, fetched at boot | required (exactly one of URL/PATH) |
 | `OAPI_SPEC_PATH` | Local/mounted spec file (JSON or YAML), alternative to the URL | required (exactly one of URL/PATH) |
 | `OAPI_API_BASE_URL` | Override the upstream base URL | spec `servers[0].url` |
-| `OAPI_HTTP_TIMEOUT` | Upstream request timeout (seconds) | `30` |
+| `OAPI_HTTP_TIMEOUT` | Upstream request timeout (seconds); must be positive | `30` |
 | `OAPI_SECURITY_<SCHEMEKEY>` | Credential for a referenced security scheme, named by its uppercased key | required if the scheme is referenced |
 
 **Exactly one** of `OAPI_SPEC_URL` / `OAPI_SPEC_PATH` must be set; both or

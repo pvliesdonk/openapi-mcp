@@ -33,17 +33,20 @@ docker run --rm \
 ## What you can do with it
 
 <!-- DOMAIN-START -->
-<!-- Replace with 3-5 concrete "you can ask Claude to X" examples. Kept across copier update. -->
+The tool surface is whatever the mounted OpenAPI spec defines: each operation
+in the spec becomes one MCP tool, named by its `operationId`. The concrete
+prompts depend on the API you wrap. With a spec mounted, you can ask Claude to:
 
-With this server mounted in an MCP client (Claude, etc.), you can:
+- **Call an operation directly:** "List the open orders" runs the spec's
+  `list_orders` operation and returns the response.
+- **Chain operations:** "Find the customer named Acme, then show their most
+  recent invoice" composes a search operation with a lookup operation.
+- **Confirm the deployment:** "Which server version is running?" calls the
+  built-in `get_server_info` tool.
 
-- **[Task 1]:** "[example user request]." Composes tools `[tool_a]` + `[tool_b]`.
-- **[Task 2]:** "[another example request]." Uses resource `[resource_x]`.
-- **[Task 3]:** "[third example]."
-
-Short, concrete prompts beat abstract feature lists. Replace the
-`[Task N]` placeholders with prompts that actually work against your
-server's tool surface.
+Because tools are generated from the spec, the exact tool names and working
+prompts match your API. Point the server at a different spec and the tool
+surface changes with no code edits.
 <!-- DOMAIN-END -->
 
 <!-- ===== TEMPLATE-OWNED SECTIONS BELOW — DO NOT EDIT; CHANGES WILL BE OVERWRITTEN ON COPIER UPDATE ===== -->
@@ -197,14 +200,25 @@ When `copier update` introduces new dependencies (such as a new extra added to `
 ## Domain configuration
 
 <!-- DOMAIN-START -->
-<!-- Replace with a table of domain-specific env vars. Kept across copier update. -->
-
-Domain environment variables use the `OAPI_` prefix:
+Domain environment variables use the `OAPI_` prefix. `openapi-mcp` derives its
+tools from an OpenAPI spec at boot, so configure the spec source, upstream base
+URL, timeout, and per-scheme upstream credentials. See
+[`.env.example`](.env.example) for a copy-paste template and the
+[configuration guide](https://pvliesdonk.github.io/openapi-mcp/latest/configuration/)
+for the full contract.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `OAPI_EXAMPLE_VAR` | (none) | **Yes** | Replace this row with your first required setting. |
-| `OAPI_ANOTHER_VAR` | `default` | No | Replace with an optional setting. |
+| `OAPI_SPEC_URL` | (none) | Exactly one of URL/PATH | URL of the OpenAPI spec, fetched at boot. |
+| `OAPI_SPEC_PATH` | (none) | Exactly one of URL/PATH | Local or mounted spec file (JSON or YAML). |
+| `OAPI_API_BASE_URL` | spec `servers[0].url` | No | Override the upstream base URL. |
+| `OAPI_HTTP_TIMEOUT` | `30` | No | Upstream request timeout in seconds. |
+| `OAPI_SECURITY_<SCHEMEKEY>` | (none) | If the scheme is referenced | Credential for a referenced security scheme, named by its uppercased key. |
+
+Setting both `OAPI_SPEC_URL` and `OAPI_SPEC_PATH`, or neither, is a fail-loud
+boot error. Upstream credentials cover `apiKey` (header or query), `http`
+`bearer`, and `http` `basic` (a `user:pass` value); `oauth2`, `openIdConnect`,
+and `mutualTLS` are out of scope and belong in a purpose-built sibling.
 
 Domain-config fields are composed inside `src/openapi_mcp/config.py` between the `CONFIG-FIELDS-START` / `CONFIG-FIELDS-END` sentinels; env reads go through `fastmcp_pvl_core.env(_ENV_PREFIX, "SUFFIX", default)` so naming stays consistent.
 <!-- DOMAIN-END -->
@@ -212,7 +226,27 @@ Domain-config fields are composed inside `src/openapi_mcp/config.py` between the
 ## Key design decisions
 
 <!-- DOMAIN-START -->
-<!-- Replace with 3-6 bullets describing non-obvious architectural decisions. Kept across copier update. -->
+- **Tools are derived from the spec at runtime.** Each spec operation becomes
+  one MCP tool through FastMCP's `OpenAPIProvider`, so pointing the server at a
+  different spec changes the tool surface with no code edits.
+- **Two auth layers stay strictly separate.** Inbound auth (who may call this
+  server, inherited from `fastmcp-pvl-core`) and upstream auth
+  (`OAPI_SECURITY_*`, how this server authenticates to the wrapped API) never
+  mix.
+- **Upstream credentials ride an `httpx.Auth` flow.** They are injected when the
+  request is dispatched rather than as client-level headers or query
+  parameters, so they survive the request construction `OpenAPIProvider`
+  performs and reach the wire for both header and query schemes.
+- **Boot fails loud.** A missing or malformed spec, an ambiguous spec source,
+  a missing credential, or a non-positive timeout raises at startup instead of
+  surfacing as a per-request error later.
+- **Scope is deliberately narrow.** Only `apiKey`, `http bearer`, and
+  `http basic` upstream schemes are supported, and a credential is required for
+  every referenced scheme (no "scheme A or B" alternatives). Larger or complex
+  APIs, `oauth2`/`openIdConnect`/`mutualTLS` auth, and mutually exclusive auth
+  alternatives belong in a purpose-built sibling.
 
-_Replace this placeholder with a short list of the non-obvious design calls this service makes, such as "writes are append-only," "embeddings cached in SQLite," or "auth uses OIDC bearer tokens." Three to six bullets is typically enough; link out to longer ADRs under `docs/decisions/` if you maintain any._
+See
+[`docs/superpowers/specs/2026-07-04-openapi-generic-wrapper-design.md`](docs/superpowers/specs/2026-07-04-openapi-generic-wrapper-design.md)
+for the full design rationale.
 <!-- DOMAIN-END -->

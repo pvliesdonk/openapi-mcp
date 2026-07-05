@@ -19,7 +19,7 @@ import httpx
 import yaml
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
 
 class BootConfigError(RuntimeError):
@@ -273,6 +273,47 @@ def _inject_scheme(
     )
 
 
+class _UpstreamAuth(httpx.Auth):
+    """Inject static upstream credentials on every outgoing request.
+
+    Credentials cannot ride on httpx's client-level ``headers``/``params``:
+    FastMCP's ``OpenAPIProvider`` tool path builds the request with
+    ``RequestDirector`` and dispatches it via ``client.send()``, which bypasses
+    the client-level merge that only happens in ``build_request``. The provider
+    re-copies ``client.headers`` by hand but not ``client.params``, so a
+    query-scheme credential set that way silently never reaches the wire. The
+    auth flow, by contrast, runs on every ``client.send()`` regardless of how
+    the request was constructed, so routing both header and query schemes
+    through it is the one mechanism that reliably reaches the upstream.
+
+    Existing request headers/params win: an operation that already carries a
+    key of the same name is left untouched, matching the provider's prior
+    "copy header only if absent" precedence.
+    """
+
+    def __init__(self, *, headers: dict[str, str], params: dict[str, str]) -> None:
+        # Copy so the "fixed credential set" invariant is owned by this type,
+        # not by whatever caller passed the dicts.
+        self._headers = dict(headers)
+        self._params = dict(params)
+
+    def auth_flow(
+        self, request: httpx.Request
+    ) -> Generator[httpx.Request, httpx.Response, None]:
+        """Apply the credentials to *request*, then yield it for dispatch."""
+        for key, value in self._headers.items():
+            if key not in request.headers:
+                request.headers[key] = value
+        to_add = {
+            key: value
+            for key, value in self._params.items()
+            if key not in request.url.params
+        }
+        if to_add:
+            request.url = request.url.copy_merge_params(to_add)
+        yield request
+
+
 def build_upstream_client(
     *,
     spec: dict[str, Any],
@@ -282,6 +323,11 @@ def build_upstream_client(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> httpx.AsyncClient:
     """Build an authenticated upstream client for the wrapped API.
+
+    Credentials are injected through an :class:`_UpstreamAuth` auth flow (not
+    client-level ``headers``/``params``) so they survive the request
+    construction FastMCP's ``OpenAPIProvider`` performs — see that class's
+    docstring for why the client-level path is unreliable.
 
     Raises:
         BootConfigError: on a non-positive timeout, a missing credential
@@ -306,9 +352,9 @@ def build_upstream_client(
     kwargs: dict[str, Any] = {
         "base_url": base_url,
         "timeout": timeout,
-        "headers": headers,
-        "params": params,
     }
+    if headers or params:
+        kwargs["auth"] = _UpstreamAuth(headers=headers, params=params)
     if transport is not None:
         kwargs["transport"] = transport
     return httpx.AsyncClient(**kwargs)

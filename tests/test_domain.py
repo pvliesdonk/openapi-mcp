@@ -115,6 +115,68 @@ def test_load_spec_from_url_uses_injected_client() -> None:
         ("url", "https://api.example.test/openapi.json"), http_client=client
     )
     assert result["openapi"] == "3.0.0"
+    # An injected client is caller-owned: load_spec must not close it.
+    assert not client.is_closed
+
+
+def test_load_spec_url_self_client_constructs_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no injected client, load_spec builds its own client and closes it.
+
+    This is the branch ``make_server()`` takes for any ``OAPI_SPEC_URL``
+    deployment: ``http_client is None`` -> ``httpx.Client(timeout=30.0)``,
+    closed in the ``finally``.
+    """
+    spec = {"openapi": "3.0.0", "info": {"title": "t"}, "paths": {}}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=spec)
+
+    real_client_cls = httpx.Client
+    created: list[httpx.Client] = []
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_client(*_args: object, **kwargs: object) -> httpx.Client:
+        captured_kwargs.update(kwargs)
+        client = real_client_cls(transport=httpx.MockTransport(handler))
+        created.append(client)
+        return client
+
+    monkeypatch.setattr("openapi_mcp.domain.httpx.Client", fake_client)
+    result = domain.load_spec(("url", "https://api.example.test/openapi.json"))
+
+    assert result["openapi"] == "3.0.0"
+    assert captured_kwargs.get("timeout") == 30.0
+    assert created and created[0].is_closed
+
+
+def test_load_spec_url_self_client_closed_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The self-built spec-fetch client is closed even when the fetch fails.
+
+    Guards the ``finally: if http_client is None: client.close()`` branch on the
+    failure path — the URL-failure tests inject their own client, so without
+    this the self-client close-on-error would be uncovered.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="nope")
+
+    real_client_cls = httpx.Client
+    created: list[httpx.Client] = []
+
+    def fake_client(*_args: object, **_kwargs: object) -> httpx.Client:
+        client = real_client_cls(transport=httpx.MockTransport(handler))
+        created.append(client)
+        return client
+
+    monkeypatch.setattr("openapi_mcp.domain.httpx.Client", fake_client)
+    with pytest.raises(domain.BootConfigError):
+        domain.load_spec(("url", "https://api.example.test/openapi.json"))
+
+    assert created and created[0].is_closed
 
 
 def test_load_spec_url_non_2xx_fails_loud() -> None:
@@ -220,64 +282,62 @@ def _lookup(mapping: dict[str, str]) -> Callable[[str], str | None]:
     return lambda key: mapping.get(key)
 
 
-async def test_build_client_apikey_header() -> None:
+async def _sent_request(
+    spec: dict[str, object], creds: dict[str, str]
+) -> httpx.Request:
+    """Build the upstream client and return the request that reaches the wire.
+
+    Dispatches a directly-built ``httpx.Request`` through ``client.send()`` —
+    the exact path FastMCP's ``OpenAPIProvider`` tool call takes, which bypasses
+    httpx's client-level ``headers``/``params`` merge. Asserting on this
+    captured request (not on client construction state) is the only honest test
+    that a credential actually reaches upstream.
+    """
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={})
+
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup(creds),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        await client.send(httpx.Request("GET", "https://api.example.test/things"))
+    finally:
+        await client.aclose()
+    return captured["request"]
+
+
+async def test_build_client_apikey_header_reaches_wire() -> None:
     spec = _one_scheme_spec({"type": "apiKey", "in": "header", "name": "X-API-Key"})
-    client = domain.build_upstream_client(
-        spec=spec,
-        base_url="https://api.example.test",
-        timeout=5.0,
-        env_lookup=_lookup({"Auth": "secret-key"}),
-    )
-    try:
-        assert client.headers["X-API-Key"] == "secret-key"
-        assert str(client.base_url) == "https://api.example.test"
-    finally:
-        await client.aclose()
+    request = await _sent_request(spec, {"Auth": "secret-key"})
+    assert request.headers["X-API-Key"] == "secret-key"
 
 
-async def test_build_client_apikey_query() -> None:
+async def test_build_client_apikey_query_reaches_wire() -> None:
     spec = _one_scheme_spec({"type": "apiKey", "in": "query", "name": "api_key"})
-    client = domain.build_upstream_client(
-        spec=spec,
-        base_url="https://api.example.test",
-        timeout=5.0,
-        env_lookup=_lookup({"Auth": "qval"}),
-    )
-    try:
-        assert client.params.get("api_key") == "qval"
-    finally:
-        await client.aclose()
+    request = await _sent_request(spec, {"Auth": "qval"})
+    assert request.url.params.get("api_key") == "qval"
 
 
-async def test_build_client_http_bearer() -> None:
+async def test_build_client_http_bearer_reaches_wire() -> None:
     spec = _one_scheme_spec({"type": "http", "scheme": "bearer"})
-    client = domain.build_upstream_client(
-        spec=spec,
-        base_url="https://api.example.test",
-        timeout=5.0,
-        env_lookup=_lookup({"Auth": "tok123"}),
-    )
-    try:
-        assert client.headers["Authorization"] == "Bearer tok123"
-    finally:
-        await client.aclose()
+    request = await _sent_request(spec, {"Auth": "tok123"})
+    assert request.headers["Authorization"] == "Bearer tok123"
 
 
-async def test_build_client_http_basic() -> None:
+async def test_build_client_http_basic_reaches_wire() -> None:
     import base64
 
     spec = _one_scheme_spec({"type": "http", "scheme": "basic"})
-    client = domain.build_upstream_client(
-        spec=spec,
-        base_url="https://api.example.test",
-        timeout=5.0,
-        env_lookup=_lookup({"Auth": "alice:s3cret"}),
-    )
-    try:
-        expected = base64.b64encode(b"alice:s3cret").decode()
-        assert client.headers["Authorization"] == f"Basic {expected}"
-    finally:
-        await client.aclose()
+    request = await _sent_request(spec, {"Auth": "alice:s3cret"})
+    expected = base64.b64encode(b"alice:s3cret").decode()
+    assert request.headers["Authorization"] == f"Basic {expected}"
 
 
 def test_build_client_missing_credential_fails_loud() -> None:
@@ -328,15 +388,108 @@ def _two_scheme_spec() -> dict[str, object]:
 
 
 async def test_build_client_multiple_schemes_accumulate() -> None:
+    request = await _sent_request(
+        _two_scheme_spec(), {"HeaderAuth": "hval", "QueryAuth": "qval"}
+    )
+    assert request.headers["X-API-Key"] == "hval"
+    assert request.url.params.get("api_key") == "qval"
+
+
+async def _sent_request_from(
+    spec: dict[str, object], creds: dict[str, str], outgoing: httpx.Request
+) -> httpx.Request:
+    """Dispatch a caller-supplied *outgoing* request through the built client.
+
+    Lets a test pre-populate the request with headers/query params so the
+    ``_UpstreamAuth`` "existing request key wins" precedence can be asserted.
+    """
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={})
+
     client = domain.build_upstream_client(
-        spec=_two_scheme_spec(),
+        spec=spec,
         base_url="https://api.example.test",
         timeout=5.0,
-        env_lookup=_lookup({"HeaderAuth": "hval", "QueryAuth": "qval"}),
+        env_lookup=_lookup(creds),
+        transport=httpx.MockTransport(handler),
     )
     try:
-        assert client.headers["X-API-Key"] == "hval"
-        assert client.params.get("api_key") == "qval"
+        await client.send(outgoing)
+    finally:
+        await client.aclose()
+    return captured["request"]
+
+
+async def test_build_client_injects_on_every_request() -> None:
+    """The auth flow injects on repeated sends and holds no per-request state."""
+    spec = _one_scheme_spec({"type": "apiKey", "in": "header", "name": "X-API-Key"})
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("X-API-Key"))
+        return httpx.Response(200, json={})
+
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({"Auth": "cred"}),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        await client.send(httpx.Request("GET", "https://api.example.test/a"))
+        await client.send(httpx.Request("GET", "https://api.example.test/b"))
+    finally:
+        await client.aclose()
+    assert seen == ["cred", "cred"]
+
+
+async def test_build_client_credential_does_not_override_existing_header() -> None:
+    """A header the operation already set wins over the injected credential.
+
+    The operation header uses a different case than the scheme name to pin the
+    case-insensitive precedence (``httpx.Headers`` membership), not just an
+    exact-string match.
+    """
+    spec = _one_scheme_spec({"type": "apiKey", "in": "header", "name": "X-API-Key"})
+    outgoing = httpx.Request(
+        "GET", "https://api.example.test/things", headers={"x-api-key": "op-value"}
+    )
+    request = await _sent_request_from(spec, {"Auth": "cred"}, outgoing)
+    assert request.headers.get_list("X-API-Key") == ["op-value"]
+
+
+async def test_build_client_credential_does_not_override_existing_query() -> None:
+    """A query param the operation already set wins over the credential."""
+    spec = _one_scheme_spec({"type": "apiKey", "in": "query", "name": "api_key"})
+    outgoing = httpx.Request("GET", "https://api.example.test/things?api_key=op-value")
+    request = await _sent_request_from(spec, {"Auth": "cred"}, outgoing)
+    assert request.url.params.get_list("api_key") == ["op-value"]
+
+
+async def test_build_client_query_credential_preserves_other_params() -> None:
+    """Injecting the credential keeps the operation's other query params."""
+    spec = _one_scheme_spec({"type": "apiKey", "in": "query", "name": "api_key"})
+    outgoing = httpx.Request("GET", "https://api.example.test/things?foo=bar")
+    request = await _sent_request_from(spec, {"Auth": "qval"}, outgoing)
+    assert request.url.params.get("foo") == "bar"
+    assert request.url.params.get("api_key") == "qval"
+
+
+async def test_build_client_no_scheme_attaches_no_auth() -> None:
+    """A spec with no required schemes yields a working, auth-free client."""
+    spec = {"openapi": "3.0.0", "components": {}, "security": [], "paths": {}}
+    client = domain.build_upstream_client(
+        spec=spec,
+        base_url="https://api.example.test",
+        timeout=5.0,
+        env_lookup=_lookup({}),
+    )
+    try:
+        assert client.auth is None
     finally:
         await client.aclose()
 

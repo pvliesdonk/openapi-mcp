@@ -45,6 +45,49 @@ def test_config_malformed_timeout_fails_loud(
         ProjectConfig.from_env()
 
 
+def test_config_zero_timeout_fails_loud_at_config_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OAPI_HTTP_TIMEOUT=0 is rejected at config-load, not just at client build.
+
+    ``env_float(minimum=0.0)`` is inclusive so 0 slips past it; ``__post_init__``
+    is what catches it. Same ``ConfigurationError`` as the negative case below,
+    so the timeout field rejects every bad value with one error type.
+    """
+    from fastmcp_pvl_core import ConfigurationError
+
+    monkeypatch.setenv("OAPI_HTTP_TIMEOUT", "0")
+    with pytest.raises(ConfigurationError, match="OAPI_HTTP_TIMEOUT"):
+        ProjectConfig.from_env()
+
+
+def test_config_negative_timeout_fails_loud_at_config_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A negative OAPI_HTTP_TIMEOUT fails loud at config-load (env_float bound)."""
+    from fastmcp_pvl_core import ConfigurationError
+
+    monkeypatch.setenv("OAPI_HTTP_TIMEOUT", "-5")
+    with pytest.raises(ConfigurationError):
+        ProjectConfig.from_env()
+
+
+def test_config_direct_nonpositive_timeout_fails_loud() -> None:
+    """Direct ProjectConfig(http_timeout=<=0) is rejected too (bypasses from_env)."""
+    from fastmcp_pvl_core import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="OAPI_HTTP_TIMEOUT"):
+        ProjectConfig(http_timeout=0.0)
+    with pytest.raises(ConfigurationError, match="OAPI_HTTP_TIMEOUT"):
+        ProjectConfig(http_timeout=-5.0)
+
+
+def test_config_positive_timeout_constructs() -> None:
+    """A positive http_timeout (and the default) constructs cleanly."""
+    assert ProjectConfig(http_timeout=1.0).http_timeout == 1.0
+    assert ProjectConfig().http_timeout == 30.0
+
+
 def test_resolve_spec_source_exactly_one() -> None:
     assert domain.resolve_spec_source("http://x/spec.json", None) == (
         "url",

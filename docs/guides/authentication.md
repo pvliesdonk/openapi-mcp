@@ -41,7 +41,7 @@ The simplest way to protect your server. A single static token shared between se
 3. Start the server with HTTP transport:
 
     ```bash
-    mcp-server serve --transport http --port 8000
+    openapi-mcp serve --transport http --port 8000
     ```
 
 ### Client usage
@@ -83,7 +83,7 @@ Full OAuth 2.1 authentication using an external identity provider. Supports user
 The server proxies OIDC itself, with no external auth sidecar to deploy:
 
 ```
-Client → mcp-server → OIDC Provider
+Client → openapi-mcp → OIDC Provider
 ```
 
 1. Client connects to the server

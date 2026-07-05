@@ -19,7 +19,15 @@ for the full prompt API.
 <!-- DOMAIN-PROMPTS-LIST-START -->
 ## Built-in prompts
 
-_None in the scaffold._ Define prompts with `@mcp.prompt(...)` decorators in
-`src/openapi_mcp/prompts.py` and list them here with their arguments,
-usage, and example output.
+### `summarize`
+
+Reusable prompt template that asks the model for a one-paragraph summary of the
+supplied text.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `context` | `str` | Yes | The source text the summary is generated from. |
+
+It returns the prompt string `Summarize the following in one paragraph:` followed
+by the supplied `context`. Defined in `src/openapi_mcp/prompts.py`.
 <!-- DOMAIN-PROMPTS-LIST-END -->

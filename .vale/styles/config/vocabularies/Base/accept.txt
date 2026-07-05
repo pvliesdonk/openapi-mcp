@@ -22,6 +22,9 @@ URIs
 access_token
 id_token
 
+# --- MCP tool and resource names ---
+get_server_info
+
 # --- Python / runtime ecosystem ---
 debugpy
 lockfile

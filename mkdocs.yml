@@ -76,6 +76,7 @@ plugins:
           - guides/*.md
         MCP Interface:
           - tools/index.md
+          - resources.md
           - prompts.md
         Deployment:
           - deployment/*.md
@@ -124,6 +125,7 @@ nav:
       - Authentication: guides/authentication.md
   - MCP Interface:
       - Tools: tools/index.md
+      - Resources: resources.md
       - Prompts: prompts.md
   - Deployment:
       - Docker: deployment/docker.md

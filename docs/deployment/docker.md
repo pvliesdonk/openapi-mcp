@@ -12,9 +12,8 @@ The server listens on port 8000 with HTTP transport by default.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OAPI_READ_ONLY` | `true` | Disable write tools |
 | `OAPI_BEARER_TOKEN` | n/a | Enable bearer token auth |
-| `OAPI_LOG_LEVEL` | `INFO` | Log level |
+| `FASTMCP_LOG_LEVEL` | `INFO` | Log level (`DEBUG` / `INFO` / `WARNING` / `ERROR`) |
 | `OAPI_INSTRUCTIONS` | (computed at startup) | System instructions for LLM context |
 | `OAPI_DEBUG_PORT` | n/a | Remote-debugger TCP port (see [Remote debugging](#remote-debugging); requires `--build-arg DEBUG=true` image) |
 | `OAPI_DEBUG_WAIT` | `false` | Block startup until IDE attaches (see [Remote debugging](#remote-debugging)) |
@@ -81,7 +80,17 @@ When the helper is invoked but `debugpy` isn't installed (say, someone sets `DEB
 
 
 <!-- DOMAIN-DOCKER-EXTRA-START -->
-<!-- Project-specific notes for Docker deployment go here; kept across copier
-     update. (E.g. "the /data/uploads volume must be writable by UID Y",
-     "container needs cap_add: SYS_PTRACE for debugging tools".) -->
+### Spec and upstream variables
+
+`openapi-mcp` also needs a spec source and, if the spec requires auth, upstream
+credentials. Set exactly one of `OAPI_SPEC_URL` / `OAPI_SPEC_PATH`, or the
+container fails to start.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OAPI_SPEC_URL` | (none) | URL of the OpenAPI spec, fetched at boot. |
+| `OAPI_SPEC_PATH` | (none) | Local or mounted spec file (JSON or YAML). |
+| `OAPI_API_BASE_URL` | spec `servers[0].url` | Override the upstream base URL. |
+| `OAPI_HTTP_TIMEOUT` | `30` | Upstream request timeout in seconds. |
+| `OAPI_SECURITY_<SCHEMEKEY>` | (none) | Credential for a referenced security scheme (see [Configuration](../configuration.md)). |
 <!-- DOMAIN-DOCKER-EXTRA-END -->
